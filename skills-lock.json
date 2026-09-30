@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "typescript-design": {
+      "source": "fa0311/typescript-design-skill",
+      "sourceType": "github",
+      "skillPath": "skills/typescript-design/SKILL.md",
+      "computedHash": "3e88b6ee2ed0ad24c2024e3539aa731e2e400cd4bfc7ba48a3e4374507bf9165"
+    }
+  }
+}
