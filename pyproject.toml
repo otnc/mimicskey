@@ -1,0 +1,10 @@
+[project]
+name = "mimicskey"
+version = "0.1.0"
+description = "Tokenizer dependencies for mimicskey (SudachiPy CLI)"
+requires-python = ">=3.10"
+dependencies = [
+    "sudachipy==0.7.0",
+    "sudachidict-core==20260723.1",
+    "sudachidict-full==20260723.1",
+]
