@@ -1,0 +1,5 @@
+dist/
+data/
+.agents/
+.claude/
+package-lock.json

@@ -1,0 +1,12 @@
+.claude/skills/
+.private/
+node_modules/
+dist/
+data/
+.venv/
+.private/
+.env
+.env.*
+!.env.example
+config.custom.js
+*.log
