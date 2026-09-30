@@ -86,7 +86,9 @@ const validateFileConfig = (raw: unknown): FileConfig => {
 
   const postVisibility = str("postVisibility", "public");
   if (postVisibility !== "public" && postVisibility !== "home" && postVisibility !== "followers") {
-    throw new Error(`config.js: postVisibility は "public" / "home" / "followers" のどれかです: ${postVisibility}`);
+    throw new Error(
+      `config.js: postVisibility は "public" / "home" / "followers" のどれかです: ${postVisibility}`,
+    );
   }
 
   const sudachiMode = str("sudachiMode", "C");
@@ -120,7 +122,12 @@ const validateFileConfig = (raw: unknown): FileConfig => {
     });
   }
 
-  const learnVisibilities = strArr("learnVisibilities", ["public", "home", "followers", "specified"]);
+  const learnVisibilities = strArr("learnVisibilities", [
+    "public",
+    "home",
+    "followers",
+    "specified",
+  ]);
   const validVis = new Set(["public", "home", "followers", "specified"]);
   for (const v of learnVisibilities) {
     if (!validVis.has(v)) throw new Error(`config.js: learnVisibilities に不正な値: ${v}`);

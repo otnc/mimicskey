@@ -4,19 +4,19 @@
 
 できる。Misskey インスタンスへの実接続が必要かどうかによって 2 種類に分かれる。
 
-| テストの種類 | Misskey 接続 | SudachiPy |
-| --- | --- | --- |
-| 単体テスト (`npm test`) | 不要 | 不要 |
-| Bot の実動作確認 (`npm run dev`) | 必要 | 必要 |
+| テストの種類                     | Misskey 接続 | SudachiPy |
+| -------------------------------- | ------------ | --------- |
+| 単体テスト (`npm test`)          | 不要         | 不要      |
+| Bot の実動作確認 (`npm run dev`) | 必要         | 必要      |
 
 単体テストはクローンして `npm ci` の後すぐ実行できる。
 
 ## 前提
 
-| | バージョン | 備考 |
-| --- | --- | --- |
-| Node.js | 24+ | `better-sqlite3` v13 のプリビルドが Windows/macOS/Linux (x64・arm64) 向けに提供されている。Visual Studio や node-gyp は不要 |
-| uv | 0.12+ | Python 環境を `.venv` に隔離して管理する。Python 本体も uv が自動で用意するので個別インストールは不要 |
+|         | バージョン | 備考                                                                                                                        |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Node.js | 24+        | `better-sqlite3` v13 のプリビルドが Windows/macOS/Linux (x64・arm64) 向けに提供されている。Visual Studio や node-gyp は不要 |
+| uv      | 0.12+      | Python 環境を `.venv` に隔離して管理する。Python 本体も uv が自動で用意するので個別インストールは不要                       |
 
 ## セットアップ
 
@@ -90,15 +90,15 @@ POST_INTERVAL_MINUTES=999999 # 投稿タイマーを事実上無効化
 
 ## 開発スクリプト一覧
 
-| コマンド | 内容 |
-| --- | --- |
-| `npm run build` | tsc でコンパイル (`dist/` に出力) |
-| `npm run start` | `dist/index.js` を実行 |
-| `npm run dev` | tsx で TypeScript を直接実行 (ビルド不要) |
-| `npm run typecheck` | 型チェックのみ (emit なし) |
-| `npm run lint` | ESLint (typescript-eslint) |
-| `npm run format` | Prettier |
-| `npm test` | Vitest 単体テスト |
+| コマンド            | 内容                                      |
+| ------------------- | ----------------------------------------- |
+| `npm run build`     | tsc でコンパイル (`dist/` に出力)         |
+| `npm run start`     | `dist/index.js` を実行                    |
+| `npm run dev`       | tsx で TypeScript を直接実行 (ビルド不要) |
+| `npm run typecheck` | 型チェックのみ (emit なし)                |
+| `npm run lint`      | ESLint (typescript-eslint)                |
+| `npm run format`    | Prettier                                  |
+| `npm test`          | Vitest 単体テスト                         |
 
 ## TypeScript のバージョン構成
 

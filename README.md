@@ -15,11 +15,11 @@ VPS 上で Node.js 24+ と pm2 で動かす。Rust のビルドも Python のグ
 
 ## 必要なもの
 
-| ソフトウェア | バージョン | 用途 | 備考 |
-| --- | --- | --- | --- |
-| Node.js | 24+ | 実行環境 | better-sqlite3 のプリビルドがあるためビルド不要 |
-| uv | 0.12+ | Python 依存の管理 | SudachiPy を `.venv` に隔離して入れる。Python 本体も uv が自動で用意する |
-| pm2 | 任意 | 常駐起動 | `npm i -g pm2`。systemd でも可 |
+| ソフトウェア | バージョン | 用途              | 備考                                                                     |
+| ------------ | ---------- | ----------------- | ------------------------------------------------------------------------ |
+| Node.js      | 24+        | 実行環境          | better-sqlite3 のプリビルドがあるためビルド不要                          |
+| uv           | 0.12+      | Python 依存の管理 | SudachiPy を `.venv` に隔離して入れる。Python 本体も uv が自動で用意する |
+| pm2          | 任意       | 常駐起動          | `npm i -g pm2`。systemd でも可                                           |
 
 Misskey 側には Bot 用アカウントのアクセストークンが必要 (後述)。
 
@@ -95,38 +95,38 @@ pm2 save        # 再起動後に pm2 resurrect で復帰させる場合
 
 `.env.example` に全変数と既定値がある。主要なもの:
 
-| 変数 | 必須 | 既定 | 説明 |
-| --- | --- | --- | --- |
-| `MISSKEY_INSTANCE` | はい | - | Bot アカウントがいるインスタンスの URL |
-| `MISSKEY_TOKEN` | はい | - | アクセストークン |
-| `TARGET_USERS` | はい | - | 学習対象。カンマ区切りで `username` または `username@host` |
-| `POST_SCHEDULE` | | (未設定) | 投稿する時刻。`00:00,12:00` のように HH:MM のカンマ区切りで指定。設定すると `POST_INTERVAL_MINUTES` は無視される |
-| `POST_INTERVAL_MINUTES` | | 60 | 定期投稿の間隔 (分)。`POST_SCHEDULE` が未設定のときのみ有効 |
-| `LEARN_NOTES_LIMIT` | | 5000 | 学習に使う最大ノート数 |
-| `LEARN_INCLUDE_REPLIES` | | true | 対象ユーザーのリプライも学習するか |
-| `LEARN_VISIBILITIES` | | すべて | 学習するノートの公開範囲。`public,home,followers,specified` をカンマ区切りで指定 |
-| `MAX_NOTE_LENGTH` | | 140 | 生成ノートの最大文字数 (硬い制限) |
-| `TARGET_NOTE_LENGTH` | | 60 | 生成文の採点基準にする目標文字数。満たない間は文を足していく |
-| `MAX_SENTENCES` | | 3 | 1 ノートの最大文数 |
-| `SHORT_NOTE_PROBABILITY` | | 0.3 | この確率で 1 文だけの短いノートを生成する (0〜1) |
-| `SUDACHI_BIN` | | `sudachipy` | SudachiPy CLI のパス (pm2 からは `.venv` 内の絶対パス推奨) |
-| `SUDACHI_MODE` | | C | 分割単位 (A / B / C)。いつでも切り替え可能 |
-| `SUDACHI_DICT_TYPE` | | (SudachiPy の既定) | 辞書種別 (small / core / full) |
-| `REPLY_ENABLED` | | true | メンション等への返信を行うか |
-| `RENOTE_EMOJI` | | `:thinking:` | renote に付けるリアクション |
+| 変数                     | 必須 | 既定               | 説明                                                                                                             |
+| ------------------------ | ---- | ------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `MISSKEY_INSTANCE`       | はい | -                  | Bot アカウントがいるインスタンスの URL                                                                           |
+| `MISSKEY_TOKEN`          | はい | -                  | アクセストークン                                                                                                 |
+| `TARGET_USERS`           | はい | -                  | 学習対象。カンマ区切りで `username` または `username@host`                                                       |
+| `POST_SCHEDULE`          |      | (未設定)           | 投稿する時刻。`00:00,12:00` のように HH:MM のカンマ区切りで指定。設定すると `POST_INTERVAL_MINUTES` は無視される |
+| `POST_INTERVAL_MINUTES`  |      | 60                 | 定期投稿の間隔 (分)。`POST_SCHEDULE` が未設定のときのみ有効                                                      |
+| `LEARN_NOTES_LIMIT`      |      | 5000               | 学習に使う最大ノート数                                                                                           |
+| `LEARN_INCLUDE_REPLIES`  |      | true               | 対象ユーザーのリプライも学習するか                                                                               |
+| `LEARN_VISIBILITIES`     |      | すべて             | 学習するノートの公開範囲。`public,home,followers,specified` をカンマ区切りで指定                                 |
+| `MAX_NOTE_LENGTH`        |      | 140                | 生成ノートの最大文字数 (硬い制限)                                                                                |
+| `TARGET_NOTE_LENGTH`     |      | 60                 | 生成文の採点基準にする目標文字数。満たない間は文を足していく                                                     |
+| `MAX_SENTENCES`          |      | 3                  | 1 ノートの最大文数                                                                                               |
+| `SHORT_NOTE_PROBABILITY` |      | 0.3                | この確率で 1 文だけの短いノートを生成する (0〜1)                                                                 |
+| `SUDACHI_BIN`            |      | `sudachipy`        | SudachiPy CLI のパス (pm2 からは `.venv` 内の絶対パス推奨)                                                       |
+| `SUDACHI_MODE`           |      | C                  | 分割単位 (A / B / C)。いつでも切り替え可能                                                                       |
+| `SUDACHI_DICT_TYPE`      |      | (SudachiPy の既定) | 辞書種別 (small / core / full)                                                                                   |
+| `REPLY_ENABLED`          |      | true               | メンション等への返信を行うか                                                                                     |
+| `RENOTE_EMOJI`           |      | `:thinking:`       | renote に付けるリアクション                                                                                      |
 
 ## 日常の操作
 
-| やりたいこと | コマンド |
-| --- | --- |
-| ログを見る | `pm2 logs mimicskey` |
-| 再起動 (設定変更後に必要) | `pm2 restart mimicskey` |
-| 停止 | `pm2 stop mimicskey` |
-| 学習対象ユーザーの変更 | `.env` の `TARGET_USERS` を編集して再起動。学習リストは次回起動時に自動で同期される |
-| 投稿スケジュールの変更 | `.env` の `POST_SCHEDULE` または `POST_INTERVAL_MINUTES` を編集して再起動 |
+| やりたいこと              | コマンド                                                                                  |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| ログを見る                | `pm2 logs mimicskey`                                                                      |
+| 再起動 (設定変更後に必要) | `pm2 restart mimicskey`                                                                   |
+| 停止                      | `pm2 stop mimicskey`                                                                      |
+| 学習対象ユーザーの変更    | `.env` の `TARGET_USERS` を編集して再起動。学習リストは次回起動時に自動で同期される       |
+| 投稿スケジュールの変更    | `.env` の `POST_SCHEDULE` または `POST_INTERVAL_MINUTES` を編集して再起動                 |
 | 分割単位の変更 (C→B など) | `.env` の `SUDACHI_MODE` を編集して再起動。DB の再作成は不要 (次のチェーン再構築から反映) |
-| 学習データのリセット | `pm2 stop` して `data/bot.db` を削除、再起動 (初回バックフィルからやり直し) |
-| アップデート | `git pull && npm ci && uv sync && npm run build && pm2 restart mimicskey` |
+| 学習データのリセット      | `pm2 stop` して `data/bot.db` を削除、再起動 (初回バックフィルからやり直し)               |
+| アップデート              | `git pull && npm ci && uv sync && npm run build && pm2 restart mimicskey`                 |
 
 ## 動作の流れ
 
