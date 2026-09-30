@@ -58,7 +58,7 @@ uv sync       # .venv に SudachiPy が入る
 
 # 設定を書く
 cp .env.example .env
-vi .env
+nano .env
 ```
 
 `.env` の必須項目は 3 つ:
