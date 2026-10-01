@@ -114,6 +114,8 @@ pm2 save        # 再起動後に pm2 resurrect で復帰させる場合
 | `SUDACHI_DICT_TYPE`      |      | (SudachiPy の既定) | 辞書種別 (small / core / full)                                                                                   |
 | `REPLY_ENABLED`          |      | true               | メンション等への返信を行うか                                                                                     |
 | `RENOTE_EMOJI`           |      | `:thinking:`       | renote に付けるリアクション                                                                                      |
+| `LOG_LEVEL`              |      | info               | ログレベル (trace / debug / info / warn / error / fatal)                                                         |
+| `LOG_PRETTY`             |      | true               | false で pino-pretty を通さず生の JSON Lines を出力する (ログ収集基盤に流す場合など)                             |
 
 ## 日常の操作
 
@@ -173,6 +175,23 @@ pm2 save        # 再起動後に pm2 resurrect で復帰させる場合
 - `npm run lint` / `npm run format`: eslint (typescript-eslint) / prettier
 
 TypeScript 7 は JS API を持たないため、JS API が必要な typescript-eslint には `@typescript/typescript6` を `typescript` という名前でエイリアスして併用している (TypeScript 公式の 6.0 との併用手順)。
+
+## 参考
+
+文章生成の自然さを改善する上で参考にした文献・実装:
+
+- [A Bit of Progress in Language Modeling](https://arxiv.org/abs/cs/0108005) (Goodman, 2001) — n-gram のスムージング手法を比較した代表的な研究
+- [A Bayesian Interpretation of Interpolated Kneser-Ney](https://www.stats.ox.ac.uk/~teh/research/compling/hpylm.pdf) (Teh, 2006, Technical Report TRA2/06, School of Computing, NUS) — interpolated Kneser-Ney を階層 Pitman-Yor 過程として導出した技術レポート
+- [A Hierarchical Bayesian Language Model based on Pitman-Yor Processes](https://aclanthology.org/P06-1124.pdf) (Teh, ACL 2006) — 上記の階層 Pitman-Yor 言語モデル (HPYLM) 自体を提案した査読付き論文
+- [On Prediction Using Variable Order Markov Models](https://arxiv.org/pdf/1107.0051) (Begleiter, El-Yaniv & Yona, JAIR 22, 2004) — PPM など可変長マルコフモデルのサーベイ
+- [Bayesian Variable Order n-gram Language Model Based on Hierarchical Pitman-Yor Processes](https://cir.nii.ac.jp/crid/1050282812859105920) — HPYLM による可変長 n-gram モデルの日本語文献
+- [Kneser–Ney smoothing - Wikipedia](https://en.wikipedia.org/wiki/Kneser%E2%80%93Ney_smoothing)
+- [Factored language model - Wikipedia](https://en.wikipedia.org/wiki/Factored_language_model) — 品詞などの factor を使った backoff
+- [KenLM: Faster and Smaller Language Model Queries](https://www.kheafield.com/papers/avenue/kenlm.pdf) (Heafield, 2011) — modified Kneser-Ney smoothing を使う高速な n-gram 言語モデル実装。Node 向けバインディングはなく C++ ビルドが要るため、このプロジェクトでは実装の参考に留める
+- [jsvine/markovify](https://github.com/jsvine/markovify) — Python のマルコフ連鎖文章生成ライブラリ。候補を複数試行してスコアで選ぶ設計がこの Bot に近い
+- [TobiasNickel/js-markov](https://github.com/TobiasNickel/js-markov) (npm: `js-markov`) — 階数 (order) を指定できる Node.js のマルコフ連鎖ライブラリ
+- [kn (npm)](https://www.npmjs.com/package/kn) — Kneser-Ney smoothing の Node.js 実装 (10 年前に公開、保守なし。参考用)
+- [Bilmes & Kirchhoff, "Factored Language Models and Generalized Parallel Backoff"](https://aclanthology.org/N03-2002.pdf) (NAACL 2003) — 品詞などの factor へ backoff する手法。`posContext` の実装で採用
 
 ## ライセンス
 

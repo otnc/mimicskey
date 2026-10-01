@@ -103,3 +103,15 @@ POST_INTERVAL_MINUTES=999999 # 投稿タイマーを事実上無効化
 ## TypeScript のバージョン構成
 
 `tsc` は TypeScript 7 (ネイティブ実装、`@typescript/native`) を使う。`typescript-eslint` は TS7 の JS API を持たないため、`@typescript/typescript6` を `typescript` という名前でエイリアスして併用している。`npx tsc --version` が `Version 7.x` を返せばセットアップは正しい。
+
+## 文章生成の改善方針
+
+マルコフ連鎖 (`src/markov.ts`) の自然さを上げる変更では、生成できる文の幅を狭める実装 (品詞の接続パターンを新たに禁止する、候補を強く絞り込むなど) を避ける。代わりに、観測頻度に応じて高階・低階の分布を混合するスムージングを優先する。こうした手法は多様性を保ったまま、低頻度文脈での不自然な遷移を減らせる。
+
+調査の出発点となる文献:
+
+- Chen, S. F., & Goodman, J. (1999). _An Empirical Study of Smoothing Techniques for Language Modeling_. — n-gram スムージング手法の比較サーベイ。
+- Goodman, J. T. (2001). _A Bit of Progress in Language Modeling_. <https://arxiv.org/abs/cs/0108005>
+- Teh, Y. W. (2006). _A Bayesian Interpretation of Interpolated Kneser-Ney_. <https://www.stats.ox.ac.uk/~teh/research/compling/hpylm.pdf> — 階層 Pitman-Yor 過程による可変長 n-gram モデル (HPYLM)。
+- Cleary, J., & Witten, I. (1984). _Data Compression Using Adaptive Coding and Partial String Matching_. IEEE Transactions on Communications. — PPM (可変長マルコフモデル) の原論文。
+- Bilmes, J., & Kirchhoff, K. (2003). _Factored Language Models and Generalized Parallel Backoff_. — 品詞などの factor を使い、語レベルの履歴が疎なときに別の factor へ backoff する手法。
