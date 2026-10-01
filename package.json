@@ -21,7 +21,8 @@
     "better-sqlite3": "^13.0.3",
     "dotenv": "^18.0.4",
     "mfm-js": "^0.26.0",
-    "misskey-js": "^2026.9.1"
+    "misskey-js": "^2026.9.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

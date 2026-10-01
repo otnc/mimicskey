@@ -2,25 +2,34 @@
 // シークレット (MISSKEY_INSTANCE, MISSKEY_TOKEN, TARGET_USERS, SUDACHI_BIN) のみ .env から読む。
 // それ以外は config.js (プロジェクトルート) から読み、config.custom.js があればそれで上書きする。
 
-// config.js / config.custom.js の型定義。JSDoc で config.js から参照される。
-export type FileConfig = {
-  dbPath: string;
-  postIntervalMinutes: number;
-  postSchedule: Array<[number, number]> | null;
-  learnNotesLimit: number;
-  includeReplies: boolean;
-  learnVisibilities: string[];
-  maxNoteLength: number;
-  targetNoteLength: number;
-  maxSentences: number;
-  shortNoteProbability: number;
-  excludeWords: string[];
-  postVisibility: "public" | "home" | "followers";
-  replyEnabled: boolean;
-  renoteEmoji: string;
-  sudachiMode: "A" | "B" | "C";
-  sudachiDictType: "small" | "core" | "full" | null;
-};
+import { z } from "zod";
+
+const scheduleEntry = z.tuple([z.number().int().min(0).max(23), z.number().int().min(0).max(59)]);
+
+// config.js / config.custom.js の形を定義し、同時にバリデーションも兼ねる。
+// JSDoc で config.js から参照される FileConfig は、このスキーマから導出する。
+const fileConfigSchema = z.object({
+  dbPath: z.string().default("data/bot.db"),
+  postIntervalMinutes: z.number().default(60),
+  postSchedule: z.array(scheduleEntry).nullable().default(null),
+  learnNotesLimit: z.number().default(5000),
+  includeReplies: z.boolean().default(true),
+  learnVisibilities: z
+    .array(z.enum(["public", "home", "followers", "specified"]))
+    .default(["public", "home", "followers", "specified"]),
+  maxNoteLength: z.number().default(140),
+  targetNoteLength: z.number().default(40),
+  maxSentences: z.number().default(2),
+  shortNoteProbability: z.number().min(0).max(1).default(0.3),
+  excludeWords: z.array(z.string()).default([]),
+  postVisibility: z.enum(["public", "home", "followers"]).default("public"),
+  replyEnabled: z.boolean().default(true),
+  renoteEmoji: z.string().default(":thinking:"),
+  sudachiMode: z.enum(["A", "B", "C"]).default("C"),
+  sudachiDictType: z.enum(["small", "core", "full"]).nullable().default(null),
+});
+
+export type FileConfig = z.infer<typeof fileConfigSchema>;
 
 export type TargetUser = { username: string; host?: string };
 
@@ -56,6 +65,18 @@ const requireEnv = (name: string) => {
   return value;
 };
 
+const misskeyInstanceSchema = z
+  .url({ protocol: /^https?$/, error: "http(s):// から始まる URL を指定してください" })
+  .transform((v) => v.replace(/\/+$/, ""));
+
+const parseEnvField = <T>(schema: z.ZodType<T>, name: string): T => {
+  const result = schema.safeParse(requireEnv(name));
+  if (!result.success) {
+    throw new Error(`環境変数 ${name} が不正です: ${result.error.issues[0]?.message}`);
+  }
+  return result.data;
+};
+
 // "user, user@remote.example" 形式をパースする。
 export const parseTargetUsers = (raw: string): TargetUser[] =>
   raw
@@ -70,87 +91,14 @@ export const parseTargetUsers = (raw: string): TargetUser[] =>
     });
 
 const validateFileConfig = (raw: unknown): FileConfig => {
-  if (typeof raw !== "object" || raw === null) {
-    throw new Error("config.js の default export がオブジェクトではありません");
+  const result = fileConfigSchema.safeParse(raw);
+  if (!result.success) {
+    const detail = result.error.issues
+      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`config.js の内容が不正です: ${detail}`);
   }
-  const c = raw as Record<string, unknown>;
-
-  const str = (k: string, fallback: string): string =>
-    typeof c[k] === "string" ? (c[k] as string) : fallback;
-  const num = (k: string, fallback: number): number =>
-    typeof c[k] === "number" ? (c[k] as number) : fallback;
-  const bool = (k: string, fallback: boolean): boolean =>
-    typeof c[k] === "boolean" ? (c[k] as boolean) : fallback;
-  const strArr = (k: string, fallback: string[]): string[] =>
-    Array.isArray(c[k]) ? (c[k] as string[]) : fallback;
-
-  const postVisibility = str("postVisibility", "public");
-  if (postVisibility !== "public" && postVisibility !== "home" && postVisibility !== "followers") {
-    throw new Error(
-      `config.js: postVisibility は "public" / "home" / "followers" のどれかです: ${postVisibility}`,
-    );
-  }
-
-  const sudachiMode = str("sudachiMode", "C");
-  if (sudachiMode !== "A" && sudachiMode !== "B" && sudachiMode !== "C") {
-    throw new Error(`config.js: sudachiMode は "A" / "B" / "C" のどれかです: ${sudachiMode}`);
-  }
-
-  const sudachiDictTypeRaw = c["sudachiDictType"];
-  const sudachiDictType: FileConfig["sudachiDictType"] =
-    sudachiDictTypeRaw === "small" || sudachiDictTypeRaw === "core" || sudachiDictTypeRaw === "full"
-      ? sudachiDictTypeRaw
-      : null;
-
-  const shortNoteProbability = num("shortNoteProbability", 0.3);
-  if (shortNoteProbability < 0 || shortNoteProbability > 1) {
-    throw new Error(`config.js: shortNoteProbability は 0〜1 の値です: ${shortNoteProbability}`);
-  }
-
-  let postSchedule: Array<[number, number]> | null = null;
-  if (Array.isArray(c["postSchedule"])) {
-    postSchedule = (c["postSchedule"] as unknown[]).map((entry) => {
-      if (!Array.isArray(entry) || entry.length < 2) {
-        throw new Error("config.js: postSchedule の要素は [hour, minute] 形式です");
-      }
-      const h = Number(entry[0]);
-      const m = Number(entry[1]);
-      if (!Number.isFinite(h) || !Number.isFinite(m) || h > 23 || m > 59) {
-        throw new Error(`config.js: postSchedule の時刻が不正です: [${h}, ${m}]`);
-      }
-      return [h, m] as [number, number];
-    });
-  }
-
-  const learnVisibilities = strArr("learnVisibilities", [
-    "public",
-    "home",
-    "followers",
-    "specified",
-  ]);
-  const validVis = new Set(["public", "home", "followers", "specified"]);
-  for (const v of learnVisibilities) {
-    if (!validVis.has(v)) throw new Error(`config.js: learnVisibilities に不正な値: ${v}`);
-  }
-
-  return {
-    dbPath: str("dbPath", "data/bot.db"),
-    postIntervalMinutes: num("postIntervalMinutes", 60),
-    postSchedule,
-    learnNotesLimit: num("learnNotesLimit", 5000),
-    includeReplies: bool("includeReplies", true),
-    learnVisibilities,
-    maxNoteLength: num("maxNoteLength", 140),
-    targetNoteLength: num("targetNoteLength", 40),
-    maxSentences: num("maxSentences", 2),
-    shortNoteProbability,
-    excludeWords: strArr("excludeWords", []),
-    postVisibility,
-    replyEnabled: bool("replyEnabled", true),
-    renoteEmoji: str("renoteEmoji", ":thinking:"),
-    sudachiMode,
-    sudachiDictType,
-  };
+  return result.data;
 };
 
 // config.js (ベース) と config.custom.js (上書き) を dynamic import でマージする。
@@ -179,7 +127,7 @@ export const loadConfig = async (): Promise<Config> => {
   const file = await loadFileConfig();
 
   return {
-    misskeyInstance: requireEnv("MISSKEY_INSTANCE").replace(/\/+$/, ""),
+    misskeyInstance: parseEnvField(misskeyInstanceSchema, "MISSKEY_INSTANCE"),
     misskeyToken: requireEnv("MISSKEY_TOKEN"),
     targetUsers: parseTargetUsers(requireEnv("TARGET_USERS")),
     sudachiBin: process.env["SUDACHI_BIN"] ?? "sudachipy",
