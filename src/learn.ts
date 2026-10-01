@@ -1,0 +1,46 @@
+// 学習データを明示的に取得・クリアするコマンド。
+// Bot の起動時 (npm run dev / start) でも同じ同期が走るが、Bot を止めずに
+// 再取得やクリアからのやり直しをしたいときにこちらを使う。
+//
+// 使い方:
+//   npm run learn             # 未取得のユーザーはバックフィル、取得済みは差分取得
+//   npm run learn -- --clear  # 学習データをクリアしてバックフィルし直す
+//
+// 学習設定 (TARGET_USERS / LEARN_* / 除外ワード) が前回から変わっているときは
+// 自動でクリアして取得し直す。Misskey への投稿は行わない。
+// Bot を起動したまま実行しても DB への書き込みは問題ないが、Bot がメモリに持つ
+// チェーンは新しいデータを反映しないため、取得後は Bot を再起動する。
+
+import "dotenv/config";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { loadConfig } from "./config.js";
+import { createStore } from "./db.js";
+import { createMisskeyClient } from "./misskey.js";
+import { resetIfLearnConfigChanged, resetLearningData, syncUserNotes } from "./sync.js";
+import { log } from "./logger.js";
+
+const clear = process.argv.slice(2).includes("--clear");
+
+const cfg = await loadConfig();
+mkdirSync(dirname(cfg.dbPath), { recursive: true });
+const store = createStore(cfg.dbPath);
+const client = createMisskeyClient(cfg.misskeyInstance, cfg.misskeyToken);
+
+try {
+  if (clear) {
+    resetLearningData(store, cfg);
+    log.info("学習データをクリアしました");
+  } else {
+    resetIfLearnConfigChanged(store, cfg);
+  }
+  for (const user of cfg.targetUsers) {
+    await syncUserNotes(client, store, user, cfg);
+  }
+  log.info(`学習データ: ${store.countNotes()} ノート`);
+} catch (err) {
+  log.error("学習データの取得に失敗しました", err);
+  process.exitCode = 1;
+} finally {
+  store.close();
+}

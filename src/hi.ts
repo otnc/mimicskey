@@ -38,7 +38,7 @@ const tokenizer = createTokenizer({
 
 const texts = store.loadRecentTexts(cfg.learnNotesLimit);
 if (texts.length === 0) {
-  console.error("学習データがありません。先に Bot を起動してノートを収集してください。");
+  console.error("学習データがありません。先に npm run learn を実行してください。");
   process.exitCode = 1;
   store.close();
   process.exit();

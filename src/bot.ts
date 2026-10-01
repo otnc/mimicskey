@@ -6,7 +6,12 @@ import type { MarkovChain } from "./markov.js";
 import { createMarkovChain } from "./markov.js";
 import QuickLRU from "quick-lru";
 import { cleanNoteText, splitSentences } from "./text.js";
-import { learnNote, syncUserNotes, resetIfLearnConfigChanged } from "./sync.js";
+import {
+  learnNote,
+  syncUserNotes,
+  catchUpUserNotes,
+  resetIfLearnConfigChanged,
+} from "./sync.js";
 import { fetchNotificationsSince, handleNotification, markNotificationsSeen } from "./notify.js";
 import { ensureLearningList } from "./list.js";
 import { createBotStream } from "./stream.js";
@@ -50,8 +55,8 @@ const getNextIntervalMs = (intervalMs: number): number => {
 // - userList チャンネル: 学習対象ユーザーを入れた非公開リストのノートをリアルタイムに受信して保存する
 // - main チャンネル: 通知をリアルタイムに受信し、返信・リアクションする
 // - 投稿: POST_SCHEDULE が設定されているときは JST 固定時刻、未設定のときは JST XX:00 境界のインターバルで投稿する
-// ノートと通知の取りこぼしは、再接続時 (_connected_) にカーソルからの差分取得で回収する。
-// 初回起動時だけノートのバックフィルを行う。
+// ノートと通知の取りこぼしは、接続時 (_connected_) にカーソルからの差分取得で回収する。
+// 初回起動時だけノートのバックフィルを行う (npm run learn でも手動で取得できる)。
 // チェーンの再構築 (SudachiPy のバッチ呼び出し 1 回) は、新規ノートが保存されたときだけ行う。
 export const createBot = (deps: {
   cfg: Config;
@@ -178,11 +183,11 @@ export const createBot = (deps: {
     if (learnNote(store, note, cfg)) chainDirty = true;
   };
 
-  // 再接続時: 切断中に取りこぼしたノートと通知をカーソルから回収する。
+  // 接続時 (初回を含む): 切れていた間に取りこぼしたノートと通知をカーソルから回収する。
   const onReconnected = () => {
     void (async () => {
       for (const user of cfg.targetUsers) {
-        await syncUserNotes(client, store, user, cfg);
+        await catchUpUserNotes(client, store, user, cfg);
       }
       await catchUpNotifications();
     })().catch((err) => log.error("再接続時の回収に失敗しました", err));

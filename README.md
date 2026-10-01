@@ -127,7 +127,8 @@ pm2 save        # 再起動後に pm2 resurrect で復帰させる場合
 | 学習対象ユーザーの変更    | `.env` の `TARGET_USERS` を編集して再起動。学習リストは次回起動時に自動で同期される       |
 | 投稿スケジュールの変更    | `.env` の `POST_SCHEDULE` または `POST_INTERVAL_MINUTES` を編集して再起動                 |
 | 分割単位の変更 (C→B など) | `.env` の `SUDACHI_MODE` を編集して再起動。DB の再作成は不要 (次のチェーン再構築から反映) |
-| 学習データのリセット      | `pm2 stop` して `data/bot.db` を削除、再起動 (初回バックフィルからやり直し)               |
+| 学習データのリセット      | `npm run learn -- --clear` (クリアしてバックフィルし直す)。Bot を再起動すると新しいデータで動く |
+| 学習データの再取得        | `npm run learn` (未取得ユーザーはバックフィル、取得済みは差分取得)                          |
 | アップデート              | `git pull && npm ci && uv sync && npm run build && pm2 restart mimicskey`                 |
 
 ## 動作の流れ
@@ -171,6 +172,8 @@ pm2 save        # 再起動後に pm2 resurrect で復帰させる場合
 ローカルでのセットアップ手順とプラットフォーム別の設定は [CONTRIBUTING.md](CONTRIBUTING.md) を参照。
 
 - `npm run dev`: tsx で直接実行
+- `npm run learn`: 学習データを明示的に取得 (`-- --clear` でクリアしてバックフィルし直す)。起動時のバックフィルを待たずに取得したいときや、Bot を止めずに再取得したいときに使う
+- `npm run hi`: 投稿せずに生成文を確認
 - `npm run typecheck`: 型チェック。`tsc` は TypeScript 7 (ネイティブ実装) を使う
 - `npm run lint` / `npm run format`: eslint (typescript-eslint) / prettier
 

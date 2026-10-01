@@ -15,7 +15,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "hi": "tsx src/hi.ts"
+    "hi": "tsx src/hi.ts",
+    "learn": "tsx src/learn.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

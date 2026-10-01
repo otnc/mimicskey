@@ -95,6 +95,8 @@ POST_INTERVAL_MINUTES=999999 # 投稿タイマーを事実上無効化
 | `npm run build`     | tsc でコンパイル (`dist/` に出力)         |
 | `npm run start`     | `dist/index.js` を実行                    |
 | `npm run dev`       | tsx で TypeScript を直接実行 (ビルド不要) |
+| `npm run learn`     | 学習データを明示的に取得 (`-- --clear` でクリアしてバックフィルし直す) |
+| `npm run hi`        | 投稿せずに生成文を確認                    |
 | `npm run typecheck` | 型チェックのみ (emit なし)                |
 | `npm run lint`      | ESLint (typescript-eslint)                |
 | `npm run format`    | Prettier                                  |

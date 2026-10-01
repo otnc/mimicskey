@@ -27,14 +27,17 @@ const learnConfigFingerprint = (cfg: Config): string =>
       .sort(),
   });
 
-// 学習設定が変わっていたら notes と cursor をクリアして再取得を促す。
-// 戻り値は true のときリセットが実行されたことを示す。
-export const resetIfLearnConfigChanged = (store: Store, cfg: Config): boolean => {
-  const current = learnConfigFingerprint(cfg);
-  const stored = store.getState("learnConfigFingerprint");
-  if (stored === current) return false;
+// 学習データ (ノートと同期カーソル) を無条件にクリアし、フィンガープリントを更新する。
+// uid:* (ユーザー ID キャッシュ) と lastPostAt は残す。
+export const resetLearningData = (store: Store, cfg: Config) => {
   store.clearLearningData();
-  store.setState("learnConfigFingerprint", current);
+  store.setState("learnConfigFingerprint", learnConfigFingerprint(cfg));
+};
+
+// 学習設定が変わっていたら学習データをクリアする。戻り値はクリアしたかどうか。
+export const resetIfLearnConfigChanged = (store: Store, cfg: Config): boolean => {
+  if (store.getState("learnConfigFingerprint") === learnConfigFingerprint(cfg)) return false;
+  resetLearningData(store, cfg);
   log.info("学習設定が変更されたためデータをリセットします (バックフィルを実行)");
   return true;
 };
@@ -54,8 +57,75 @@ export const learnNote = (store: Store, note: Note, cfg: Config) => {
   return added;
 };
 
-// 対象ユーザーの新着ノートを Store に取り込む。
-// 初回は LEARN_NOTES_LIMIT まで遡ってバックフィルし、以降はカーソル以降の差分だけ取る。
+// ユーザー ID を解決して state に置く (API を叩くのは最初の 1 回だけ)。
+const resolveUserId = async (client: MisskeyClient, store: Store, user: TargetUser) => {
+  const userKey = user.host ? `${user.username}@${user.host}` : user.username;
+  let userId = store.getState(`uid:${userKey}`);
+  if (!userId) {
+    userId = (await client.resolveUser(user.username, user.host)).id;
+    store.setState(`uid:${userKey}`, userId);
+  }
+  return { userKey, userId };
+};
+
+const learnableRows = (page: Note[], cfg: Config): NoteRow[] =>
+  page
+    .filter((n) => isLearnable(n, cfg))
+    .map((n) => ({ id: n.id, userId: n.userId, text: n.text, createdAt: n.createdAt }));
+
+// バックフィル: 新しい方から 100 件ずつ LEARN_NOTES_LIMIT まで遡る。
+const backfillUserNotes = async (
+  client: MisskeyClient,
+  store: Store,
+  userKey: string,
+  userId: string,
+  cfg: Config,
+) => {
+  let untilId: string | undefined;
+  let newest: string | null = null;
+  let added = 0;
+  let fetched = 0;
+  while (fetched < cfg.learnNotesLimit) {
+    const page = await client.userNotes(userId, { untilId, limit: 100 });
+    if (page.length === 0) break;
+    if (!newest) newest = page[0].id;
+    added += store.upsertNotes(learnableRows(page, cfg));
+    fetched += page.length;
+    if (page.length < 100) break;
+    untilId = page[page.length - 1].id;
+  }
+  if (newest) store.setState(`cursor:${userId}`, newest);
+  log.info(`バックフィル ${userKey}: ${fetched} 件取得、新規 ${added} 件保存`);
+  return added;
+};
+
+// 差分同期: カーソルより新しいノートをすべて取る。
+const diffUserNotes = async (
+  client: MisskeyClient,
+  store: Store,
+  userKey: string,
+  userId: string,
+  cursor: string,
+  cfg: Config,
+) => {
+  let untilId: string | undefined;
+  let newest: string | null = null;
+  let added = 0;
+  for (;;) {
+    const page = await client.userNotes(userId, { sinceId: cursor, untilId, limit: 100 });
+    if (page.length === 0) break;
+    if (!newest) newest = page[0].id;
+    added += store.upsertNotes(learnableRows(page, cfg));
+    if (page.length < 100) break;
+    untilId = page[page.length - 1].id;
+  }
+  if (newest) store.setState(`cursor:${userId}`, newest);
+  if (added > 0) log.info(`同期 ${userKey}: +${added} 件`);
+  return added;
+};
+
+// 対象ユーザーのノートを Store に取り込む (learn コマンド用)。
+// 未取得のユーザーは LEARN_NOTES_LIMIT まで遡ってバックフィルし、取得済みはカーソル以降の差分だけ取る。
 // 戻り値は新規に保存できたノート数。
 export const syncUserNotes = async (
   client: MisskeyClient,
@@ -63,54 +133,22 @@ export const syncUserNotes = async (
   user: TargetUser,
   cfg: Config,
 ) => {
-  const userKey = user.host ? `${user.username}@${user.host}` : user.username;
+  const { userKey, userId } = await resolveUserId(client, store, user);
+  const cursor = store.getState(`cursor:${userId}`);
+  if (!cursor) return backfillUserNotes(client, store, userKey, userId, cfg);
+  return diffUserNotes(client, store, userKey, userId, cursor, cfg);
+};
 
-  // ユーザー ID は最初に 1 回だけ解決して state に置く。
-  let userId = store.getState(`uid:${userKey}`);
-  if (!userId) {
-    userId = (await client.resolveUser(user.username, user.host)).id;
-    store.setState(`uid:${userKey}`, userId);
-  }
-
-  const learnableRows = (page: Note[]): NoteRow[] =>
-    page
-      .filter((n) => isLearnable(n, cfg))
-      .map((n) => ({ id: n.id, userId: n.userId, text: n.text, createdAt: n.createdAt }));
-
-  const cursorKey = `cursor:${userId}`;
-  const cursor = store.getState(cursorKey);
-  let added = 0;
-
-  if (!cursor) {
-    // バックフィル: 新しい方から 100 件ずつ遡る。
-    let untilId: string | undefined;
-    let newest: string | null = null;
-    let fetched = 0;
-    while (fetched < cfg.learnNotesLimit) {
-      const page = await client.userNotes(userId, { untilId, limit: 100 });
-      if (page.length === 0) break;
-      if (!newest) newest = page[0].id;
-      added += store.upsertNotes(learnableRows(page));
-      fetched += page.length;
-      if (page.length < 100) break;
-      untilId = page[page.length - 1].id;
-    }
-    if (newest) store.setState(cursorKey, newest);
-    log.info(`バックフィル ${userKey}: ${fetched} 件取得、新規 ${added} 件保存`);
-  } else {
-    // 差分同期: カーソルより新しいノートをすべて取る。
-    let untilId: string | undefined;
-    let newest: string | null = null;
-    for (;;) {
-      const page = await client.userNotes(userId, { sinceId: cursor, untilId, limit: 100 });
-      if (page.length === 0) break;
-      if (!newest) newest = page[0].id;
-      added += store.upsertNotes(learnableRows(page));
-      if (page.length < 100) break;
-      untilId = page[page.length - 1].id;
-    }
-    if (newest) store.setState(cursorKey, newest);
-    if (added > 0) log.info(`同期 ${userKey}: +${added} 件`);
-  }
-  return added;
+// Bot の接続・再接続時の回収用: カーソル以降の差分だけ取る。
+// 未取得 (バックフィル前) のユーザーは何もしない (バックフィルは learn コマンドで行う)。
+export const catchUpUserNotes = async (
+  client: MisskeyClient,
+  store: Store,
+  user: TargetUser,
+  cfg: Config,
+) => {
+  const { userKey, userId } = await resolveUserId(client, store, user);
+  const cursor = store.getState(`cursor:${userId}`);
+  if (!cursor) return 0;
+  return diffUserNotes(client, store, userKey, userId, cursor, cfg);
 };
