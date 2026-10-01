@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
+    "cross-spawn": "^7.0.6",
     "dotenv": "^18.0.4",
     "mfm-js": "^0.26.0",
     "misskey-js": "^2026.9.1",
@@ -27,6 +28,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^9.6.0",
+    "@types/cross-spawn": "^6.0.6",
     "@types/node": "^26.6.3",
     "@typescript/native": "npm:typescript@^7.0.2",
     "@typescript/typescript6": "^6.0.2",
