@@ -119,17 +119,17 @@ pm2 save        # 再起動後に pm2 resurrect で復帰させる場合
 
 ## 日常の操作
 
-| やりたいこと              | コマンド                                                                                  |
-| ------------------------- | ----------------------------------------------------------------------------------------- |
-| ログを見る                | `pm2 logs mimicskey`                                                                      |
-| 再起動 (設定変更後に必要) | `pm2 restart mimicskey`                                                                   |
-| 停止                      | `pm2 stop mimicskey`                                                                      |
-| 学習対象ユーザーの変更    | `.env` の `TARGET_USERS` を編集して再起動。学習リストは次回起動時に自動で同期される       |
-| 投稿スケジュールの変更    | `.env` の `POST_SCHEDULE` または `POST_INTERVAL_MINUTES` を編集して再起動                 |
-| 分割単位の変更 (C→B など) | `.env` の `SUDACHI_MODE` を編集して再起動。DB の再作成は不要 (次のチェーン再構築から反映) |
+| やりたいこと              | コマンド                                                                                        |
+| ------------------------- | ----------------------------------------------------------------------------------------------- |
+| ログを見る                | `pm2 logs mimicskey`                                                                            |
+| 再起動 (設定変更後に必要) | `pm2 restart mimicskey`                                                                         |
+| 停止                      | `pm2 stop mimicskey`                                                                            |
+| 学習対象ユーザーの変更    | `.env` の `TARGET_USERS` を編集して再起動。学習リストは次回起動時に自動で同期される             |
+| 投稿スケジュールの変更    | `.env` の `POST_SCHEDULE` または `POST_INTERVAL_MINUTES` を編集して再起動                       |
+| 分割単位の変更 (C→B など) | `.env` の `SUDACHI_MODE` を編集して再起動。DB の再作成は不要 (次のチェーン再構築から反映)       |
 | 学習データのリセット      | `npm run learn -- --clear` (クリアしてバックフィルし直す)。Bot を再起動すると新しいデータで動く |
-| 学習データの再取得        | `npm run learn` (未取得ユーザーはバックフィル、取得済みは差分取得)                          |
-| アップデート              | `git pull && npm ci && uv sync && npm run build && pm2 restart mimicskey`                 |
+| 学習データの再取得        | `npm run learn` (未取得ユーザーはバックフィル、取得済みは差分取得)                              |
+| アップデート              | `git pull && npm ci && uv sync && npm run build && pm2 restart mimicskey`                       |
 
 ## 動作の流れ
 
