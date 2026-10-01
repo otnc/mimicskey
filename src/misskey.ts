@@ -36,8 +36,7 @@ export const createMisskeyClient = (origin: string, credential: string) => {
       }),
     react: (noteId: string, reaction: string) =>
       cli.request("notes/reactions/create", { noteId, reaction }),
-    // renote 通知の note は renote された側 (自分のノート) なので、
-    // renote した側を引き当てるために一覧を引く。
+    // renote 通知の note は renote された側 (自分のノート) なので、renote した側を引き当てるために一覧を引く。
     renotes: (noteId: string) => cli.request("notes/renotes", { noteId, limit: 20 }),
     // ---- 学習用ユーザーリスト (WebSocket の userList チャンネルの購読先) ----
     userLists: () => cli.request("users/lists/list", {}),

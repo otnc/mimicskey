@@ -4,6 +4,7 @@ import type { MisskeyClient, MkNotification, Note } from "./misskey.js";
 import type { Tokenizer } from "./tokenizer.js";
 import type { MarkovChain } from "./markov.js";
 import { createMarkovChain } from "./markov.js";
+import QuickLRU from "quick-lru";
 import { cleanNoteText, splitSentences } from "./text.js";
 import { learnNote, syncUserNotes, resetIfLearnConfigChanged } from "./sync.js";
 import { fetchNotificationsSince, handleNotification, markNotificationsSeen } from "./notify.js";
@@ -67,15 +68,8 @@ export const createBot = (deps: {
   let postTimer: ReturnType<typeof setTimeout> | null = null;
   let botUserId = "";
 
-  // 処理済み通知 ID の重複排除 (WebSocket と取りこぼし回収の両方から来る)。
-  const seenIds = new Set<string>();
-  const rememberSeen = (id: string) => {
-    seenIds.add(id);
-    if (seenIds.size > 500) {
-      const oldest = seenIds.values().next().value;
-      if (oldest !== undefined) seenIds.delete(oldest);
-    }
-  };
+  // 処理済み通知 ID の重複排除 (WebSocket と取りこぼし回収の両方から来る)。古いものから上限 500 件で追い出す。
+  const seenIds = new QuickLRU<string, true>({ maxSize: 500 });
 
   // チェーンを構築する (済みで新規ノートがなければ使い回す)。
   const ensureChain = async () => {
@@ -140,8 +134,7 @@ export const createBot = (deps: {
     if (postTimer) clearTimeout(postTimer);
     const nextAt = (() => {
       if (cfg.postSchedule) return getNextScheduleMs(cfg.postSchedule);
-      // インターバルモード: lastPostAt から N 分後ではなく、
-      // 次の JST XX:00 境界に合わせる (規則正しい時刻で投稿するため)。
+      // インターバルモード: lastPostAt から N 分後ではなく、次の JST XX:00 境界に合わせる (規則正しい時刻で投稿するため)。
       return getNextIntervalMs(cfg.postIntervalMs);
     })();
     const delay = Math.min(Math.max(nextAt - Date.now(), 0), MAX_TIMEOUT_MS);
@@ -155,7 +148,7 @@ export const createBot = (deps: {
   // 通知 1 件の処理本体。処理したらカーソルを進める。
   const processOne = async (n: MkNotification) => {
     if (seenIds.has(n.id)) return;
-    rememberSeen(n.id);
+    seenIds.set(n.id, true);
     if (!cfg.replyEnabled) return;
     const active = await ensureChain();
     if (!active) return;

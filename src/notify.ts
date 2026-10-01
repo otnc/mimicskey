@@ -44,9 +44,7 @@ const generateReply = async (chain: MarkovChain, tokenizer: Tokenizer, note: Not
   });
 };
 
-// 起動時に呼ぶ: 既存の通知を見済みにする。
-// 古いメンションに一斉に返信しないためで、以降の通知は WebSocket で
-// リアルタイムに、再接続時には取りこぼし回収で受け取る。
+// 起動時に呼ぶ: 既存の通知を見済みにする。古いメンションに一斉に返信しないためで、以降の通知は WebSocket でリアルタイムに、再接続時には取りこぼし回収で受け取る。
 export const markNotificationsSeen = async (client: MisskeyClient, store: Store) => {
   const latest = await client.notifications({ limit: 1 });
   if (latest.length > 0) store.setState("lastNotificationId", latest[0].id);
@@ -67,10 +65,8 @@ export const fetchNotificationsSince = async (client: MisskeyClient, sinceId: st
   return all.reverse();
 };
 
-// 通知 1 件に反応する。mention / reply / quote には生成文で返信し、
-// renote には renote したノートにリアクションを付ける。
-// renote 通知の note は renote された側 (自分のノート) なので、
-// notes/renotes で renote した側を引き当ててから反応する。
+// 通知 1 件に反応する。mention / reply / quote には生成文で返信し、renote には renote したノートにリアクションを付ける。
+// renote 通知の note は renote された側 (自分のノート) なので、notes/renotes で renote した側を引き当ててから反応する。
 export const handleNotification = async (
   deps: {
     client: MisskeyClient;

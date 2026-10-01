@@ -7,9 +7,7 @@ export type NoteRow = {
   createdAt: string | null;
 };
 
-// 学習済みノート (notes) と、同期カーソルや最終投稿時刻といった状態 (state) を
-// SQLite に保存する。better-sqlite3 は同期 API なので、バックフィルの書き込みは
-// トランザクションにまとめて 1 度にコミットする。
+// 学習済みノート (notes) と、同期カーソルや最終投稿時刻といった状態 (state) を SQLite に保存する。better-sqlite3 は同期 API なので、バックフィルの書き込みはトランザクションにまとめて 1 度にコミットする。
 export const createStore = (path: string) => {
   const db = new Database(path);
   db.pragma("journal_mode = WAL");

@@ -1,5 +1,4 @@
-// デフォルト設定。カスタマイズしたい場合は config.custom.js を作成し、
-// 変えたいキーだけ上書きしてください (config.custom.js は .gitignore 済み)。
+// デフォルト設定。カスタマイズしたい場合は config.custom.js を作成し、変えたいキーだけ上書きしてください (config.custom.js は .gitignore 済み)。
 
 /** @type {import('./src/config.js').FileConfig} */
 export default {
@@ -51,9 +50,9 @@ export default {
   // A: 細かく分割 → 遷移が濃いが再結合が荒れやすい
   // B: 複合語をある程度まとめる → 遷移と品質のバランスが良い
   // C: 最大単位にまとめる → 固有名詞が壊れないが遷移が希薄
-  sudachiMode: "C",
+  sudachiMode: "B",
   // 辞書の語彙量: "small" | "core" | "full" | null
   // null にすると sudachipy のデフォルト辞書を使う
   // small: 基本語彙のみ / core: 一般固有名詞追加 / full: 雑多な固有名詞まで収録
-  sudachiDictType: null,
+  sudachiDictType: "full",
 };

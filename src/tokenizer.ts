@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import spawn from "cross-spawn";
 import { log } from "./logger.js";
 
 export type Token = {
@@ -19,30 +19,36 @@ export type SudachiOptions = {
   dictType?: string;
 };
 
-// SudachiPy (sudachi.rs と同じ Rust コアの pip パッケージ) の CLI を
-// 子プロセスで呼ぶトークナイザ。uv tool install で入るので Rust のビルドは要らない。
-// 文をまとめて 1 回のバッチ呼び出しに乗せることで、プロセス起動コストを
-// チェーン再構築 1 回あたり 1 回に抑える。
+// SudachiPy (sudachi.rs と同じ Rust コアの pip パッケージ) の CLI を子プロセスで呼ぶトークナイザ。uv tool install で入るので Rust のビルドは要らない。
+// 文をまとめて 1 回のバッチ呼び出しに乗せることで、プロセス起動コストをチェーン再構築 1 回あたり 1 回に抑える。
+// cross-spawn を使うのは、Windows での .bat/.cmd 解決やパスのスペースの扱いを node:child_process の素の spawn より正しく行うため。
+// (execa や nano-spawn のような高レベルラッパーは、存在しないコマンドを Windows では cmd.exe 経由でフォールバック実行してしまい、
+//  ENOENT が隠れて分かりにくいエラーになるため見送った。cross-spawn は node:child_process.spawn 同様に ENOENT を正しく報告する)
 // 出力は `sudachipy -a` のタブ区切り: 表層形, 品詞, 正規化形, 辞書形, 読み, ...
 // 文の区切りは EOS 行。
 export const createTokenizer = (opts: SudachiOptions) => {
   const run = (args: string[], input: string) =>
     new Promise<string>((resolve, reject) => {
       // PYTHONUTF8=1 で Python 側の stdin/stdout を UTF-8 に固定する。
-      // これがないと Windows やロケールが UTF-8 未設定の Linux で
-      // stdin のエンコーディングがロケール依存になり、UTF-8 で書き込んだ入力が化ける。
+      // これがないと Windows やロケールが UTF-8 未設定の Linux で stdin のエンコーディングがロケール依存になり、UTF-8 で書き込んだ入力が化ける。
       const child = spawn(opts.bin, args, {
         stdio: ["pipe", "pipe", "pipe"],
         env: { ...process.env, PYTHONUTF8: "1" },
       });
+      // cross-spawn の型は stdio の値を見て絞り込まないが、上で "pipe" を 3 つ指定しているので必ず非 null。
+      const { stdout, stderr, stdin } = child;
+      if (!stdout || !stderr || !stdin) {
+        reject(new Error("SudachiPy の子プロセスの標準入出力を取得できませんでした"));
+        return;
+      }
       let out = "";
       let err = "";
-      child.stdout.setEncoding("utf8");
-      child.stderr.setEncoding("utf8");
-      child.stdout.on("data", (chunk: string) => {
+      stdout.setEncoding("utf8");
+      stderr.setEncoding("utf8");
+      stdout.on("data", (chunk: string) => {
         out += chunk;
       });
-      child.stderr.on("data", (chunk: string) => {
+      stderr.on("data", (chunk: string) => {
         err += chunk;
       });
       child.on("error", (e) => {
@@ -58,10 +64,10 @@ export const createTokenizer = (opts: SudachiOptions) => {
         else
           reject(new Error(`SudachiPy が終了コード ${code} で失敗しました: ${err.slice(0, 500)}`));
       });
-      child.stdin.on("error", (e) =>
+      stdin.on("error", (e) =>
         reject(new Error(`SudachiPy への書き込みに失敗しました: ${e.message}`)),
       );
-      child.stdin.end(input);
+      stdin.end(input);
     });
 
   const parse = (stdout: string) => {

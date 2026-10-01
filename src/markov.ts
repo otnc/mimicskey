@@ -12,6 +12,9 @@ type Candidate = {
   weight: number;
 };
 
+// 文脈 (正規化形の文字列キー) ごとの、次に出た語の統計。
+type WordStat = { token: Token; count: number };
+
 // 返信時に、相手が使った語から文を始めるための文脈。
 type SeedContext = {
   /** シード語の直前のトークン (文頭のときは BOS)。 */
@@ -37,31 +40,58 @@ export type NoteOptions = SentenceOptions & {
   maxSentences?: number;
 };
 
-// 二階マルコフ連鎖。自然な日本文を出すための仕掛け:
-// - 文単位で BOS/EOS 付きで学習し、文の形をしたものだけ生成する
-// - キーは正規化形・出力は表層形で、表記揺れを同じ遷移にまとめる
-// - 観測されていない三階状態では一階にバックオフして、歩みが止まらないようにする
-// - 文頭と遷移は出現頻度で重み付きサンプリング
-// - 助詞始まり・助詞終わりの文は棄却、bigram のループと学習文の逐語コピーも棄却
-// - 候補は目標長への近さでスコア化し、試行の中で最良のものを採用する
+/**
+ * 二階マルコフ連鎖。自然な日本文を出すための仕掛け:
+ * - 文単位で BOS/EOS 付きで学習し、文の形をしたものだけ生成する
+ * - キーは正規化形・出力は表層形で、表記揺れを同じ遷移にまとめる
+ * - 二階 (直前 2 トークン) の分布は、一階 (直前 1 トークン) の分布へ補間バックオフする。
+ *   observed/unobserved で分布を丸ごと切り替えるのではなく、絶対値割引 (absolute discounting) で
+ *   二階から引いた分の確率質量を一階の分布に混ぜる、補間 Kneser-Ney 近似
+ *   (Chen & Goodman, "An Empirical Study of Smoothing Techniques for Language Modeling", 1999;
+ *    Teh, "A Bayesian Interpretation of Interpolated Kneser-Ney", 2006)
+ * - 一階の分布自体も、素の頻度ではなく継続確率 (その語が何種類の直前文脈の後に現れたか) を使う。
+ *   頻出語が稀な文脈でも不当に高確率にならないという Kneser-Ney の核になる工夫
+ * - 割引量 D は固定値ではなく、その階の出現回数 1 回・2 回の語数の比から都度推定する
+ *   (D = n1 / (n1 + 2*n2); 同じく Chen & Goodman 1999 の推定式)
+ * - 一階にも文脈がない語 (低頻度語・未知語) は、まず品詞ベースの分布 (この品詞の後には何が来やすいか) へ、
+ *   それも空なら学習全体の頻度分布へとさらにバックオフし、生成が途中で止まらないようにする
+ *   (Bilmes & Kirchhoff, "Factored Language Models and Generalized Parallel Backoff", 2003 の
+ *    考え方: 語の履歴が疎なら、別の factor へ落ちる)
+ * - 文頭と遷移は、上記の分布による重み付きサンプリング
+ * - 助詞始まり・助詞終わりの文は棄却、bigram のループと学習文の逐語コピーも棄却
+ * - 候補は目標長への近さでスコア化し、試行の中で最良のものを採用する
+ *
+ * @param rng 乱数源。テストで決定的な結果を得るために差し替え可能。
+ */
 export const createMarkovChain = (rng: () => number = Math.random) => {
-  // 直前 2 トークン -> 次トークン (二階) と、直前 1 トークン -> 次 (一階、バックオフ用)。
-  const t2 = new Map<string, Candidate[]>();
-  const t1 = new Map<string, Candidate[]>();
+  // 直前 2 トークン (正規化形 \u0000 連結) -> 次トークンの正規化形 -> 出現回数。
+  const t2 = new Map<string, Map<string, WordStat>>();
+  // 直前 1 トークン (正規化形) -> 次トークンの正規化形 -> 出現回数。二階のバックオフ先。
+  const t1 = new Map<string, Map<string, WordStat>>();
+  // 直前語の品詞大分類 -> 次トークンの正規化形 -> 出現回数。
+  // 直前の語そのものが一階にも出てこない (低頻度語・未知語) ときの、語彙全体よりは的を絞ったバックオフ先。
+  // Bilmes & Kirchhoff (2003) の factored language model の考え方: 語の履歴が疎なら、別の factor (ここでは品詞) へ落ちる。
+  const posContext = new Map<string, Map<string, WordStat>>();
+  // コーパス全体での出現回数。品詞バックオフ先も見つからないときの最終手段。
+  const unigramCounts = new Map<string, WordStat>();
   // 逐語コピーを弾くための、学習済み文の正規化形の集合。
   const sentenceNorms = new Set<string>();
   // 正規化形 -> その出現位置の文脈 (返信のシード用)。
   const seedContexts = new Map<string, SeedContext[]>();
 
-  const addCandidate = (map: Map<string, Candidate[]>, key: string, token: Token) => {
-    const list = map.get(key);
-    if (list === undefined) {
-      map.set(key, [{ token, weight: 1 }]);
-      return;
+  const bump = (map: Map<string, WordStat>, token: Token) => {
+    const stat = map.get(token.normalized);
+    if (stat === undefined) map.set(token.normalized, { token, count: 1 });
+    else stat.count += 1;
+  };
+
+  const addCandidate = (map: Map<string, Map<string, WordStat>>, key: string, token: Token) => {
+    let inner = map.get(key);
+    if (inner === undefined) {
+      inner = new Map();
+      map.set(key, inner);
     }
-    const last = list[list.length - 1];
-    if (last.token === token) last.weight += 1;
-    else list.push({ token, weight: 1 });
+    bump(inner, token);
   };
 
   // 文を学習する。文には終端記号 (。など) を含んでいること。
@@ -78,6 +108,8 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
         const p2 = seq[i - 1];
         addCandidate(t2, p1.normalized + "\u0000" + p2.normalized, cur);
         addCandidate(t1, p2.normalized, cur);
+        addCandidate(posContext, p2.pos[0] ?? "", cur);
+        bump(unigramCounts, cur);
       }
 
       // 返信のシードに使えるよう、各トークンの出現位置を覚えておく。
@@ -91,11 +123,136 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
         list.push({ prev: i > 0 ? toks[i - 1] : BOS, seed: toks[i] });
       }
     }
+    smoothingDirty = true;
   };
 
-  const startCandidates = () => t2.get(`${BOS.normalized}\u0000${BOS.normalized}`) ?? [];
+  // --- 補間 Kneser-Ney 近似のための下位分布 (一度計算したら build まで使い回す) ---
 
-  // 出現頻度による重み付きサンプリング。
+  // 一階の文脈 (直前 1 トークン) ごとの継続カウント: その語が何種類の直前文脈 (二階の p1) の後に現れたか。
+  // 素の頻度の代わりにこれを使うのが Kneser-Ney の核。
+  const continuation1 = new Map<string, Map<string, number>>();
+  const continuation1Total = new Map<string, number>();
+  // 文脈なし (ユニグラム) の継続カウント: その語が何種類の直前文脈 (一階の文脈) の後に現れたか。
+  const continuation0 = new Map<string, number>();
+  let continuation0Total = 0;
+  // 各階の割引量。出現回数 1 回・2 回の語数の比から推定する (Good-Turing 的な簡易推定)。
+  let discount2 = 0.75;
+  let discount1 = 0.75;
+  let smoothingDirty = true;
+
+  // D = n1 / (n1 + 2*n2)。データが少なすぎるときは暴れないよう [0.1, 0.75] に収める。
+  const estimateDiscount = (counts: number[]): number => {
+    let n1 = 0;
+    let n2 = 0;
+    for (const c of counts) {
+      if (c === 1) n1++;
+      else if (c === 2) n2++;
+    }
+    if (n1 === 0) return 0.75;
+    const d = n1 / (n1 + 2 * Math.max(n2, 1));
+    return Math.min(0.75, Math.max(0.1, d));
+  };
+
+  const rebuildSmoothing = () => {
+    continuation1.clear();
+    continuation1Total.clear();
+    continuation0.clear();
+    continuation0Total = 0;
+
+    const t2Counts: number[] = [];
+    for (const [ctxKey, wordMap] of t2) {
+      const p2 = ctxKey.slice(ctxKey.indexOf("\u0000") + 1);
+      let inner = continuation1.get(p2);
+      if (inner === undefined) {
+        inner = new Map();
+        continuation1.set(p2, inner);
+      }
+      for (const [w, stat] of wordMap) {
+        inner.set(w, (inner.get(w) ?? 0) + 1);
+        continuation1Total.set(p2, (continuation1Total.get(p2) ?? 0) + 1);
+        t2Counts.push(stat.count);
+      }
+    }
+    discount2 = estimateDiscount(t2Counts);
+
+    for (const wordMap of t1.values()) {
+      for (const w of wordMap.keys()) {
+        continuation0.set(w, (continuation0.get(w) ?? 0) + 1);
+        continuation0Total += 1;
+      }
+    }
+    const continuation1Counts: number[] = [];
+    for (const inner of continuation1.values()) {
+      for (const c of inner.values()) continuation1Counts.push(c);
+    }
+    discount1 = estimateDiscount(continuation1Counts);
+
+    smoothingDirty = false;
+  };
+
+  const ensureSmoothing = () => {
+    if (smoothingDirty) rebuildSmoothing();
+  };
+
+  // 一階のバックオフ分布 P(w | p2)。p2 自体が未知ならさらにユニグラムの継続確率へ落ちる。
+  const prob0 = (w: string): number =>
+    continuation0Total === 0 ? 0 : (continuation0.get(w) ?? 0) / continuation0Total;
+
+  const prob1 = (p2: string, w: string): number => {
+    const contMap = continuation1.get(p2);
+    const total = continuation1Total.get(p2);
+    if (contMap === undefined || total === undefined || total === 0) return prob0(w);
+    const discounted = Math.max((contMap.get(w) ?? 0) - discount1, 0) / total;
+    const lambda = (discount1 * contMap.size) / total;
+    return discounted + lambda * prob0(w);
+  };
+
+  // 文脈 (p1, p2) の次に来る語の候補と重みを、補間バックオフで求める。
+  // 直接観測された語は割引後の頻度、未観測の語は一階のバックオフ分布から重みを割り当てる。
+  const stepCandidates = (p1: Token, p2: Token): Candidate[] => {
+    ensureSmoothing();
+    const p2n = p2.normalized;
+    const wordMap2 = t2.get(p1.normalized + "\u0000" + p2n);
+    const wordMap1 = t1.get(p2n);
+
+    if (wordMap2 === undefined && wordMap1 === undefined) {
+      // p2 が直前文脈として一度も観測されていない (低頻度語・未知語)。
+      // 語彙全体より的を絞った、品詞ベースの分布 (「この品詞の後には何が来やすいか」) へ落ちる。
+      // それも空なら学習全体の頻度分布まで落ち、歩みを止めない。
+      const posMap = posContext.get(p2.pos[0] ?? "");
+      const source = posMap !== undefined && posMap.size > 0 ? posMap : unigramCounts;
+      return [...source.values()].map((stat) => ({ token: stat.token, weight: stat.count }));
+    }
+
+    const out: Candidate[] = [];
+    const seen = new Set<string>();
+    let total2 = 0;
+    if (wordMap2) for (const stat of wordMap2.values()) total2 += stat.count;
+    const types2 = wordMap2?.size ?? 0;
+
+    if (wordMap2) {
+      for (const [w, stat] of wordMap2) {
+        const weight = Math.max(stat.count - discount2, 0);
+        if (weight > 0) out.push({ token: stat.token, weight });
+        seen.add(w);
+      }
+    }
+
+    // 割引いた分の確率質量 (D2 * 観測された語の種類数) を、一階の分布に従って未観測語へ配る。
+    const leftoverMass = total2 > 0 ? discount2 * types2 : 1;
+    if (wordMap1) {
+      for (const [w, stat] of wordMap1) {
+        if (seen.has(w)) continue;
+        const p = prob1(p2n, w);
+        if (p > 0) out.push({ token: stat.token, weight: leftoverMass * p });
+      }
+    }
+    return out;
+  };
+
+  const startCandidates = () => stepCandidates(BOS, BOS);
+
+  // 重み付きサンプリング (重みは割引後の出現回数、またはバックオフ確率に比例する値)。
   const pick = (cands: Candidate[]) => {
     if (cands.length === 0) return null;
     let total = 0;
@@ -162,10 +319,8 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
       // EOS に届くか、行き止まりか、トークン上限まで歩く。
       let terminated = false;
       while (out.length < maxTokens) {
-        const c2 = t2.get(state[0].normalized + "\u0000" + state[1].normalized);
-        const c1 = t1.get(state[1].normalized);
-        const cands = c2 !== undefined && c2.length > 0 ? c2 : c1;
-        if (cands === undefined || cands.length === 0) break;
+        const cands = stepCandidates(state[0], state[1]);
+        if (cands.length === 0) break;
         const tok = pick(cands);
         if (tok === null) break;
         if (tok === EOS) {
