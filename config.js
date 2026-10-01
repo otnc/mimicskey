@@ -1,5 +1,4 @@
-// デフォルト設定。カスタマイズしたい場合は config.custom.js を作成し、
-// 変えたいキーだけ上書きしてください (config.custom.js は .gitignore 済み)。
+// デフォルト設定。カスタマイズしたい場合は config.custom.js を作成し、変えたいキーだけ上書きしてください (config.custom.js は .gitignore 済み)。
 
 /** @type {import('./src/config.js').FileConfig} */
 export default {

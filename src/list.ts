@@ -3,7 +3,9 @@ import type { MisskeyClient } from "./misskey.js";
 import type { Store } from "./db.js";
 import { log } from "./logger.js";
 
-// 学習対象ユーザーを入れる非公開ユーザーリストを用意する。Misskey には「特定ユーザーのノート」を直接購読するストリーミングチャンネルがないため、非公開リスト + userList チャンネルで受ける。リストは自分にしか見えない (isPublic: false) ので、フォローのような社会的な副作用もない。
+// 学習対象ユーザーを入れる非公開ユーザーリストを用意する。
+// Misskey には「特定ユーザーのノート」を直接購読するストリーミングチャンネルがないため、非公開リスト + userList チャンネルで受ける。
+// リストは自分にしか見えない (isPublic: false) ので、フォローのような社会的な副作用もない。
 // リスト名は "mimicskey-<6文字>" の形式で初回生成時に決め、DB (state: list:name) に保存して以降はそれを使う。同名の既存リストとの衝突を避けるためのランダムサフィックス。
 // 前提: 対象ユーザーの ID は state (uid:...) に解決済みであること (起動時に syncUserNotes が行う)。
 const getOrCreateListName = (store: Store): string => {

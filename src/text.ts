@@ -1,8 +1,7 @@
 import * as mfm from "mfm-js";
 
 // MFM を AST にパース (mfm-js) して、学習に使う部分だけを取り出す。
-// 地の文 (text)・Unicode 絵文字・ハッシュタグ (の語幹) を残し、
-// メンション・URL・リンク・カスタム絵文字・引用・コード・検索構文は捨てる。
+// 地の文 (text)・Unicode 絵文字・ハッシュタグ (の語幹) を残し、メンション・URL・リンク・カスタム絵文字・引用・コード・検索構文は捨てる。
 // fn ($[x2 ...] など) と装飾系のノードは中身を再帰的に取り出す。
 // 改行は文の境界として使うので残す。
 const extractText = (nodes: readonly mfm.MfmNode[]): string => {
@@ -28,8 +27,7 @@ const extractText = (nodes: readonly mfm.MfmNode[]): string => {
         for (const child of node.children) walk(child);
         return;
       default:
-        // mention / url / link / emojiCode / quote / search / blockCode /
-        // inlineCode / mathBlock / mathInline は捨てる
+        // mention / url / link / emojiCode / quote / search / blockCode / inlineCode / mathBlock / mathInline は捨てる
         return;
     }
   };
