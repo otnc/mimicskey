@@ -6,12 +6,7 @@ import type { MarkovChain } from "./markov.js";
 import { createMarkovChain } from "./markov.js";
 import QuickLRU from "quick-lru";
 import { cleanNoteText, splitSentences } from "./text.js";
-import {
-  learnNote,
-  syncUserNotes,
-  catchUpUserNotes,
-  resetIfLearnConfigChanged,
-} from "./sync.js";
+import { learnNote, syncUserNotes, catchUpUserNotes, resetIfLearnConfigChanged } from "./sync.js";
 import { fetchNotificationsSince, handleNotification, markNotificationsSeen } from "./notify.js";
 import { ensureLearningList } from "./list.js";
 import { createBotStream } from "./stream.js";
