@@ -7,6 +7,10 @@ const EOS: Token = { surface: "", normalized: "\u0001EOS", pos: ["EOS"] };
 // この品詞で始まる文は不自然なので、文頭候補から弾く。
 const BAD_START_POS = new Set(["助詞", "助動詞", "記号", "空白", "接続詞"]);
 
+// 文の評価スコアに、1 トークンあたりの平均対数確率をどれだけ反映するか。
+// 目標文字数からの差 (文字数単位) と同じスケール感になるよう、経験的に選んだ値。
+const LIKELIHOOD_WEIGHT = 10;
+
 type Candidate = {
   token: Token;
   weight: number;
@@ -253,16 +257,18 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
   const startCandidates = () => stepCandidates(BOS, BOS);
 
   // 重み付きサンプリング (重みは割引後の出現回数、またはバックオフ確率に比例する値)。
-  const pick = (cands: Candidate[]) => {
+  // 選んだ候補の対数確率も返す。文全体の尤もらしさをスコアに使うため (後述)。
+  const pick = (cands: Candidate[]): { token: Token; logProb: number } | null => {
     if (cands.length === 0) return null;
     let total = 0;
     for (const c of cands) total += c.weight;
     let r = rng() * total;
     for (const c of cands) {
       r -= c.weight;
-      if (r < 0) return c.token;
+      if (r < 0) return { token: c.token, logProb: Math.log(c.weight / total) };
     }
-    return cands[cands.length - 1].token;
+    const last = cands[cands.length - 1];
+    return { token: last.token, logProb: Math.log(last.weight / total) };
   };
 
   // 同じ bigram が 2 回出たら、退化したループ文として棄却する。
@@ -297,6 +303,8 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
     for (let attempt = 0; attempt < attempts; attempt++) {
       const out: Token[] = [];
       let state: [Token, Token];
+      // 歩みの中で実際に選んだ候補の対数確率の合計。文の尤もらしさのスコアに使う (後述)。
+      let logProbSum = 0;
 
       if (opts.seed !== undefined) {
         const ctxs = seedContexts.get(opts.seed);
@@ -310,10 +318,11 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
       } else {
         const starts = startCandidates().filter((c) => !BAD_START_POS.has(c.token.pos[0] ?? ""));
         if (starts.length === 0) return null;
-        const startTok = pick(starts);
-        if (!startTok) return null;
-        state = [BOS, startTok];
-        out.push(startTok);
+        const picked = pick(starts);
+        if (!picked) return null;
+        state = [BOS, picked.token];
+        out.push(picked.token);
+        logProbSum += picked.logProb;
       }
 
       // EOS に届くか、行き止まりか、トークン上限まで歩く。
@@ -321,14 +330,15 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
       while (out.length < maxTokens) {
         const cands = stepCandidates(state[0], state[1]);
         if (cands.length === 0) break;
-        const tok = pick(cands);
-        if (tok === null) break;
-        if (tok === EOS) {
+        const picked = pick(cands);
+        if (picked === null) break;
+        logProbSum += picked.logProb;
+        if (picked.token === EOS) {
           terminated = true;
           break;
         }
-        out.push(tok);
-        state = [state[1], tok];
+        out.push(picked.token);
+        state = [state[1], picked.token];
       }
 
       if (out.length < 2) continue;
@@ -339,8 +349,15 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
       if (sentenceNorms.has(out.map((t) => t.normalized).join(""))) continue; // 逐語コピー
       if (out[out.length - 1].pos[0] === "助詞") continue; // 助詞で終わる文は棄却
 
-      // 終端できた文を優先し、その中で目標長に近いものを選ぶ。
-      const score = (terminated ? 50 : 0) - Math.abs(text.length - targetChars);
+      // 終端できた文を優先し、目標長への近さと文全体の尤もらしさ (1 トークンあたりの平均対数確率) で評価する。
+      // 複数候補を生成してモデル自身の尤度でより良いものを選ぶという rollout の考え方
+      // (Li & Bertsekas, "Most Likely Sequence Generation for n-Grams, Transformers, HMMs,
+      //  and Markov Chains, by Using Rollout Algorithms", 2024) を、既存の複数試行の仕組みに取り込む。
+      const avgLogProb = logProbSum / out.length;
+      const score =
+        (terminated ? 50 : 0) -
+        Math.abs(text.length - targetChars) +
+        LIKELIHOOD_WEIGHT * avgLogProb;
       if (best === null || score > best.score) best = { text, score };
       if (best.score >= 40) break;
     }

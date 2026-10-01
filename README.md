@@ -192,6 +192,7 @@ TypeScript 7 は JS API を持たないため、JS API が必要な typescript-e
 - [TobiasNickel/js-markov](https://github.com/TobiasNickel/js-markov) (npm: `js-markov`) — 階数 (order) を指定できる Node.js のマルコフ連鎖ライブラリ
 - [kn (npm)](https://www.npmjs.com/package/kn) — Kneser-Ney smoothing の Node.js 実装 (10 年前に公開、保守なし。参考用)
 - [Bilmes & Kirchhoff, "Factored Language Models and Generalized Parallel Backoff"](https://aclanthology.org/N03-2002.pdf) (NAACL 2003) — 品詞などの factor へ backoff する手法。`posContext` の実装で採用
+- [Li & Bertsekas, "Most Likely Sequence Generation for n-Grams, Transformers, HMMs, and Markov Chains, by Using Rollout Algorithms"](https://arxiv.org/abs/2403.15465) (2024) — 純粋なランダムサンプリングではなく、複数候補を生成してモデル尤度でより良いものを選ぶ (rollout) ことで生成系列の尤もらしさを上げる手法。目標長への近さに加えて文全体の平均対数確率もスコアに含める形で採用
 
 ## ライセンス
 
