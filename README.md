@@ -193,6 +193,7 @@ TypeScript 7 は JS API を持たないため、JS API が必要な typescript-e
 - [kn (npm)](https://www.npmjs.com/package/kn) — Kneser-Ney smoothing の Node.js 実装 (10 年前に公開、保守なし。参考用)
 - [Bilmes & Kirchhoff, "Factored Language Models and Generalized Parallel Backoff"](https://aclanthology.org/N03-2002.pdf) (NAACL 2003) — 品詞などの factor へ backoff する手法。`posContext` の実装で採用
 - [Li & Bertsekas, "Most Likely Sequence Generation for n-Grams, Transformers, HMMs, and Markov Chains, by Using Rollout Algorithms"](https://arxiv.org/abs/2403.15465) (2024) — 純粋なランダムサンプリングではなく、複数候補を生成してモデル尤度でより良いものを選ぶ (rollout) ことで生成系列の尤もらしさを上げる手法。目標長への近さに加えて文全体の平均対数確率もスコアに含める形で採用
+- [秋山陸・寺岡丈博「事象の連想と共起性に基づいたマルコフ連鎖による文生成」](https://www.jsise.org/wp-content/uploads/2022/08/2021_hokkaido_a06.pdf) (情報システム学会 2021年度全国大会, 拓殖大学) — 連想概念辞書による重み付けで、直前の語だけでなく話題の連想・共起性も考慮して文を生成する試み。ノート内の 2 文目以降を直前の文の名詞でシードする形で採用
 
 ## ライセンス
 

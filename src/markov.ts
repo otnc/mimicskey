@@ -291,14 +291,17 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
       .trim();
 
   // 1 文生成する。妥当な候補が見つからなければ null。
-  const generateSentence = (opts: SentenceOptions = {}) => {
+  // トークン列も返す内部版: ノート内で次の文のシードを選ぶのに品詞情報が要るため (generateNote 参照)。
+  const generateSentenceWithTokens = (
+    opts: SentenceOptions = {},
+  ): { text: string; tokens: Token[] } | null => {
     const maxTokens = opts.maxTokens ?? 40;
     const minChars = opts.minChars ?? 6;
     const maxChars = opts.maxChars ?? 70;
     const targetChars = opts.targetChars ?? 30;
     const attempts = opts.attempts ?? 40;
 
-    let best: { text: string; score: number } | null = null;
+    let best: { text: string; tokens: Token[]; score: number } | null = null;
 
     for (let attempt = 0; attempt < attempts; attempt++) {
       const out: Token[] = [];
@@ -310,7 +313,7 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
         const ctxs = seedContexts.get(opts.seed);
         if (ctxs === undefined) {
           // チェーンが知らない語なら、通常の文頭から始める。
-          return generateSentence({ ...opts, seed: undefined });
+          return generateSentenceWithTokens({ ...opts, seed: undefined });
         }
         const ctx = ctxs[Math.floor(rng() * ctxs.length)];
         state = [ctx.prev, ctx.seed];
@@ -358,14 +361,27 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
         (terminated ? 50 : 0) -
         Math.abs(text.length - targetChars) +
         LIKELIHOOD_WEIGHT * avgLogProb;
-      if (best === null || score > best.score) best = { text, score };
+      if (best === null || score > best.score) best = { text, tokens: out, score };
       if (best.score >= 40) break;
     }
-    return best === null ? null : best.text;
+    return best === null ? null : { text: best.text, tokens: best.tokens };
   };
+
+  const generateSentence = (opts: SentenceOptions = {}) =>
+    generateSentenceWithTokens(opts)?.text ?? null;
+
+  // 生成済みの文から、チェーンが知っている語の中で一番長い名詞を選ぶ。
+  // 返信のシード選び (notify.ts の generateReply) と同じ考え方を、ノート内の文同士にも使う。
+  const pickNounSeed = (tokens: Token[]): string | undefined =>
+    tokens
+      .filter((t) => t.pos[0] === "名詞" && t.normalized.length >= 2)
+      .sort((a, b) => b.normalized.length - a.normalized.length)
+      .find((t) => seedContexts.has(t.normalized))?.normalized;
 
   // ノート 1 つ分を生成する。長さ上限の中で 1..maxSentences 文。
   // 目標長 (targetChars) に満たない間は文を足していく。
+  // 2 文目以降は、直前の文から拾った名詞をシードにして話題をつなげる
+  // (事象の連想と共起性に基づいたマルコフ連鎖による文生成, 秋山・寺岡, 情報システム学会 2021 の着想)。
   const generateNote = (opts: NoteOptions = {}) => {
     const maxNoteChars = opts.maxNoteChars ?? 140;
     const targetNoteChars = opts.targetChars ?? 40;
@@ -375,17 +391,19 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
       maxChars: Math.min(opts.maxChars ?? 70, maxNoteChars),
     };
 
-    const first = generateSentence(sentenceOpts);
+    const first = generateSentenceWithTokens(sentenceOpts);
     if (first === null) return null;
 
-    const parts: string[] = [first];
-    let total = first.length;
+    const parts: string[] = [first.text];
+    let total = first.text.length;
+    let prevTokens = first.tokens;
     while (parts.length < maxSentences && total < targetNoteChars) {
-      const s = generateSentence({ ...sentenceOpts, seed: undefined });
+      const s = generateSentenceWithTokens({ ...sentenceOpts, seed: pickNounSeed(prevTokens) });
       if (s === null) break;
-      if (total + s.length > maxNoteChars) break;
-      parts.push(s);
-      total += s.length;
+      if (total + s.text.length > maxNoteChars) break;
+      parts.push(s.text);
+      total += s.text.length;
+      prevTokens = s.tokens;
     }
 
     let text = parts.join("");
