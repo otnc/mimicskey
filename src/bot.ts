@@ -6,7 +6,7 @@ import type { TwitterClient } from "./twitter.js";
 import type { MarkovChain } from "./markov.js";
 import { createMarkovChain } from "./markov.js";
 import QuickLRU from "quick-lru";
-import { cleanNoteText, splitSentences } from "./text.js";
+import { extractLearningSentences } from "./text.js";
 import { learnNote, syncUserNotes, catchUpUserNotes } from "./misskey-sync.js";
 import { resetIfLearnConfigChanged } from "./learn-reset.js";
 import { syncTwitterUser } from "./twitter-sync.js";
@@ -105,7 +105,7 @@ export const createBot = (deps: {
     }
     const sentences: string[] = [];
     for (const text of texts) {
-      for (const s of splitSentences(cleanNoteText(text))) sentences.push(s);
+      for (const s of extractLearningSentences(text)) sentences.push(s);
     }
     if (sentences.length === 0) return null;
 

@@ -5,7 +5,44 @@ const BOS: Token = { surface: "", normalized: "\u0001BOS", pos: ["BOS"] };
 const EOS: Token = { surface: "", normalized: "\u0001EOS", pos: ["EOS"] };
 
 // この品詞で始まる文は不自然なので、文頭候補から弾く。
-const BAD_START_POS = new Set(["助詞", "助動詞", "記号", "空白", "接続詞"]);
+const BAD_START_POS = new Set(["助詞", "助動詞", "記号", "補助記号", "空白", "接続詞", "接尾辞"]);
+
+// チェーンのキー。Sudachi の正規化形は活用も辞書形にまとめる (知っ/知ら/知り → 知る) ので、正規化形だけをキーにすると
+// 「知っ」の後に「知ら」の後に来るはずの「ない」がつながり、「知っない」のような活用の崩れた文になる。
+// 品詞と活用形までキーに含め、表記揺れ (打込む/打ち込む) だけをまとめる。
+const keyOf = (token: Token) => `${token.normalized}\u0002${token.pos.join(",")}`;
+
+// 文の最後の語 (句読点などの補助記号を除く) がこれだと、文が途中で切れている。
+// 「しまし」「買っ」のような用言の未然形・連用形で終わる文や、助詞で終わる文を弾く。
+const isIncompleteEnding = (token: Token) => {
+  if (token.pos[0] === "助詞") return true;
+  const inflecting =
+    token.pos[0] === "動詞" || token.pos[0] === "形容詞" || token.pos[0] === "助動詞";
+  return inflecting && /^(未然形|連用形)/.test(token.pos[5] ?? "");
+};
+
+const BRACKET_PAIRS: Record<string, string> = {
+  "「": "」",
+  "『": "』",
+  "（": "）",
+  "(": ")",
+  "【": "】",
+  "［": "］",
+  "[": "]",
+  "“": "”",
+};
+const CLOSING_BRACKETS = new Set(Object.values(BRACKET_PAIRS));
+
+// 括弧の開きと閉じが対応していない文 (「(それそう。」など) を見分ける。
+const hasUnbalancedBrackets = (text: string) => {
+  const expected: string[] = [];
+  for (const c of text) {
+    const closer = BRACKET_PAIRS[c];
+    if (closer !== undefined) expected.push(closer);
+    else if (CLOSING_BRACKETS.has(c) && expected.pop() !== c) return true;
+  }
+  return expected.length > 0;
+};
 
 // 文の評価スコアに、1 トークンあたりの平均対数確率をどれだけ反映するか。
 // 目標文字数からの差 (文字数単位) と同じスケール感になるよう、経験的に選んだ値。
@@ -16,7 +53,7 @@ type Candidate = {
   weight: number;
 };
 
-// 文脈 (正規化形の文字列キー) ごとの、次に出た語の統計。
+// 文脈 (keyOf のキー) ごとの、次に出た語の統計。
 type WordStat = { token: Token; count: number };
 
 // 返信時に、相手が使った語から文を始めるための文脈。
@@ -47,7 +84,7 @@ export type NoteOptions = SentenceOptions & {
 /**
  * 二階マルコフ連鎖。自然な日本文を出すための仕掛け:
  * - 文単位で BOS/EOS 付きで学習し、文の形をしたものだけ生成する
- * - キーは正規化形・出力は表層形で、表記揺れを同じ遷移にまとめる
+ * - キーは正規化形 + 品詞・活用形、出力は表層形で、活用を保ったまま表記揺れを同じ遷移にまとめる
  * - 二階 (直前 2 トークン) の分布は、一階 (直前 1 トークン) の分布へ補間バックオフする。
  *   observed/unobserved で分布を丸ごと切り替えるのではなく、絶対値割引 (absolute discounting) で
  *   二階から引いた分の確率質量を一階の分布に混ぜる、補間 Kneser-Ney 近似
@@ -68,24 +105,25 @@ export type NoteOptions = SentenceOptions & {
  * @param rng 乱数源。テストで決定的な結果を得るために差し替え可能。
  */
 export const createMarkovChain = (rng: () => number = Math.random) => {
-  // 直前 2 トークン (正規化形 \u0000 連結) -> 次トークンの正規化形 -> 出現回数。
+  // 直前 2 トークン (keyOf のキーを \u0000 で連結) -> 次トークンのキー -> 出現回数。
   const t2 = new Map<string, Map<string, WordStat>>();
-  // 直前 1 トークン (正規化形) -> 次トークンの正規化形 -> 出現回数。二階のバックオフ先。
+  // 直前 1 トークンのキー -> 次トークンのキー -> 出現回数。二階のバックオフ先。
   const t1 = new Map<string, Map<string, WordStat>>();
-  // 直前語の品詞大分類 -> 次トークンの正規化形 -> 出現回数。
+  // 直前語の品詞大分類 -> 次トークンのキー -> 出現回数。
   // 直前の語そのものが一階にも出てこない (低頻度語・未知語) ときの、語彙全体よりは的を絞ったバックオフ先。
   // Bilmes & Kirchhoff (2003) の factored language model の考え方: 語の履歴が疎なら、別の factor (ここでは品詞) へ落ちる。
   const posContext = new Map<string, Map<string, WordStat>>();
   // コーパス全体での出現回数。品詞バックオフ先も見つからないときの最終手段。
   const unigramCounts = new Map<string, WordStat>();
-  // 逐語コピーを弾くための、学習済み文の正規化形の集合。
+  // 逐語コピーを弾くための、学習済み文のキー列の集合。
   const sentenceNorms = new Set<string>();
   // 正規化形 -> その出現位置の文脈 (返信のシード用)。
   const seedContexts = new Map<string, SeedContext[]>();
 
   const bump = (map: Map<string, WordStat>, token: Token) => {
-    const stat = map.get(token.normalized);
-    if (stat === undefined) map.set(token.normalized, { token, count: 1 });
+    const key = keyOf(token);
+    const stat = map.get(key);
+    if (stat === undefined) map.set(key, { token, count: 1 });
     else stat.count += 1;
   };
 
@@ -102,7 +140,7 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
   const build = (sentences: Token[][]) => {
     for (const toks of sentences) {
       if (toks.length < 2) continue;
-      sentenceNorms.add(toks.map((t) => t.normalized).join(""));
+      sentenceNorms.add(toks.map(keyOf).join("\u0000"));
 
       // 先頭のトークンも二階の履歴を持てるように、BOS を 2 つ前置する。
       const seq: Token[] = [BOS, BOS, ...toks, EOS];
@@ -110,8 +148,8 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
         const cur = seq[i];
         const p1 = seq[i - 2];
         const p2 = seq[i - 1];
-        addCandidate(t2, p1.normalized + "\u0000" + p2.normalized, cur);
-        addCandidate(t1, p2.normalized, cur);
+        addCandidate(t2, keyOf(p1) + "\u0000" + keyOf(p2), cur);
+        addCandidate(t1, keyOf(p2), cur);
         addCandidate(posContext, p2.pos[0] ?? "", cur);
         bump(unigramCounts, cur);
       }
@@ -215,8 +253,8 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
   // 直接観測された語は割引後の頻度、未観測の語は一階のバックオフ分布から重みを割り当てる。
   const stepCandidates = (p1: Token, p2: Token): Candidate[] => {
     ensureSmoothing();
-    const p2n = p2.normalized;
-    const wordMap2 = t2.get(p1.normalized + "\u0000" + p2n);
+    const p2n = keyOf(p2);
+    const wordMap2 = t2.get(keyOf(p1) + "\u0000" + p2n);
     const wordMap1 = t1.get(p2n);
 
     if (wordMap2 === undefined && wordMap1 === undefined) {
@@ -275,16 +313,21 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
   const hasRepeatedBigram = (out: Token[]) => {
     const seen = new Set<string>();
     for (let i = 0; i + 1 < out.length; i++) {
-      const key = `${out[i].normalized}\u0000${out[i + 1].normalized}`;
+      const key = `${keyOf(out[i])}\u0000${keyOf(out[i + 1])}`;
       if (seen.has(key)) return true;
       seen.add(key);
     }
     return false;
   };
 
+  // 表層形をつなぐ。空白はトークン化で落ちているので、英単語同士の間にだけスペースを戻す (This is → Thisis にしない)。
   const joinSurfaces = (toks: Token[]) =>
     toks
-      .map((t) => t.surface)
+      .map((t, i) =>
+        i > 0 && /^[A-Za-z']+$/.test(toks[i - 1].surface) && /^[A-Za-z']+$/.test(t.surface)
+          ? ` ${t.surface}`
+          : t.surface,
+      )
       .join("")
       .replace(/^[、。,.！？!?…\s]+/, "")
       .replace(/\s{2,}/g, " ")
@@ -349,8 +392,10 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
       const text = joinSurfaces(out);
       if (text.length < minChars || text.length > maxChars) continue;
       if (hasRepeatedBigram(out)) continue; // ループ文
-      if (sentenceNorms.has(out.map((t) => t.normalized).join(""))) continue; // 逐語コピー
-      if (out[out.length - 1].pos[0] === "助詞") continue; // 助詞で終わる文は棄却
+      if (sentenceNorms.has(out.map(keyOf).join("\u0000"))) continue; // 逐語コピー
+      const lastWord = out.findLast((t) => t.pos[0] !== "補助記号");
+      if (lastWord === undefined || isIncompleteEnding(lastWord)) continue; // 途中で切れた文
+      if (hasUnbalancedBrackets(text)) continue;
 
       // 終端できた文を優先し、目標長への近さと文全体の尤もらしさ (1 トークンあたりの平均対数確率) で評価する。
       // 複数候補を生成してモデル自身の尤度でより良いものを選ぶという rollout の考え方
@@ -397,13 +442,17 @@ export const createMarkovChain = (rng: () => number = Math.random) => {
     const parts: string[] = [first.text];
     let total = first.text.length;
     let prevTokens = first.tokens;
+    // 2 文目以降は前の文の名詞から始めるので、同じフレーズの繰り返しになりやすい。ノート全体で bigram が重複したら採用しない。
+    let noteTokens = first.tokens;
     while (parts.length < maxSentences && total < targetNoteChars) {
       const s = generateSentenceWithTokens({ ...sentenceOpts, seed: pickNounSeed(prevTokens) });
       if (s === null) break;
       if (total + s.text.length > maxNoteChars) break;
+      if (hasRepeatedBigram([...noteTokens, ...s.tokens])) break;
       parts.push(s.text);
       total += s.text.length;
       prevTokens = s.tokens;
+      noteTokens = [...noteTokens, ...s.tokens];
     }
 
     let text = parts.join("");

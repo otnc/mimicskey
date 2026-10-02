@@ -112,6 +112,72 @@ describe("createMarkovChain", () => {
     expect(s.endsWith("。")).toBe(true);
   });
 
+  test("同じ語の別の活用形の続きをつなげない", () => {
+    // 知っ (連用形) と 知ら (未然形) は正規化形が同じ 知る になる。
+    const shitt = { ...tok("知っ", "動詞,一般,*,*,五段-ラ行,連用形-促音便"), normalized: "知る" };
+    const shira = { ...tok("知ら", "動詞,一般,*,*,五段-ラ行,未然形-一般"), normalized: "知る" };
+    const te = tok("て", "助詞,接続助詞,*,*,*,*");
+    const iru = tok("いる", "動詞,非自立可能,*,*,上一段-ア行,終止形-一般");
+    const nai = tok("ない", "助動詞,*,*,*,助動詞-ナイ,終止形-一般");
+    const chain = createMarkovChain(makeRng(7));
+    chain.build([
+      [tok("私"), WA, shitt, te, iru, PUNCT],
+      [tok("彼"), WA, shira, nai, PUNCT],
+    ]);
+    for (let i = 0; i < 100; i++) {
+      const s = chain.generateSentence({ minChars: 2, attempts: 20 });
+      if (s === null) continue;
+      expect(s).not.toContain("知っない");
+      expect(s).not.toContain("知らて");
+    }
+  });
+
+  test("括弧の対応が崩れた文は出さない", () => {
+    const open = tok("「", "補助記号,括弧開,*,*,*,*");
+    const close = tok("」", "補助記号,括弧閉,*,*,*,*");
+    const to = tok("と", "助詞,格助詞,*,*,*,*");
+    const run = tok("走る", "動詞,一般,*,*,*,終止形-一般");
+    const chain = createMarkovChain(makeRng(11));
+    chain.build([
+      [open, tok("猫"), close, to, tok("言う", "動詞,一般,*,*,*,終止形-一般"), PUNCT],
+      [tok("猫"), GA, run, PUNCT],
+      [tok("犬"), GA, run, PUNCT],
+    ]);
+    for (let i = 0; i < 100; i++) {
+      const s = chain.generateSentence({ minChars: 2, attempts: 20 });
+      if (s === null) continue;
+      expect(s.split("「").length).toBe(s.split("」").length);
+    }
+  });
+
+  test("用言の連用形で途中で切れた文は出さない", () => {
+    const futt = tok("降っ", "動詞,一般,*,*,五段-ラ行,連用形-促音便");
+    const ta = tok("た", "助動詞,*,*,*,助動詞-タ,終止形-一般");
+    const chain = createMarkovChain(makeRng(13));
+    chain.build([
+      [tok("雨"), GA, futt, ta, PUNCT],
+      [tok("雪"), GA, futt, PUNCT],
+    ]);
+    for (let i = 0; i < 100; i++) {
+      const s = chain.generateSentence({ minChars: 2, attempts: 20 });
+      if (s === null) continue;
+      expect(s.endsWith("降っ。")).toBe(false);
+    }
+  });
+
+  test("英単語同士はスペースを挟んでつなぐ", () => {
+    const to = tok("と", "助詞,格助詞,*,*,*,*");
+    const chain = createMarkovChain(makeRng(17));
+    chain.build([
+      [tok("Hello"), tok("world"), to, tok("言う", "動詞,一般,*,*,*,終止形-一般"), PUNCT],
+      [tok("world"), to, tok("書く", "動詞,一般,*,*,*,終止形-一般"), PUNCT],
+    ]);
+    const generated = Array.from({ length: 50 }, () =>
+      chain.generateSentence({ minChars: 2, attempts: 20 }),
+    );
+    expect(generated).toContain("Hello worldと書く。");
+  });
+
   test("generateNote は長さ上限を守り、終端記号で終わる", () => {
     const chain = createMarkovChain(makeRng(5));
     chain.build(corpus);

@@ -7,7 +7,7 @@ import { loadConfig } from "./config.js";
 import { createStore } from "./db.js";
 import { createTokenizer } from "./tokenizer.js";
 import { createMarkovChain } from "./markov.js";
-import { cleanNoteText, splitSentences } from "./text.js";
+import { extractLearningSentences } from "./text.js";
 
 // hi コマンド専用のオプション (HI_* 環境変数で上書き可能)
 const intEnv = (name: string, fallback: number) => {
@@ -46,7 +46,7 @@ if (texts.length === 0) {
 
 const sentences: string[] = [];
 for (const text of texts) {
-  for (const s of splitSentences(cleanNoteText(text))) sentences.push(s);
+  for (const s of extractLearningSentences(text)) sentences.push(s);
 }
 if (sentences.length === 0) {
   console.error("有効な文が見つかりませんでした。");
