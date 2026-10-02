@@ -12,14 +12,12 @@ export default {
   postIntervalMinutes: 60,
   postSchedule: null,
 
-  // ---- 学習設定 ----
-  // 学習に使う最大ノート数 (新しい方から)
+  // ---- 学習設定 (Misskey と X で共通) ----
+  // 学習に使う最大ノート数 (新しい方から)。バックフィルではユーザーごとにこの件数まで遡る
   learnNotesLimit: 5000,
   // 対象ユーザーのリプライも学習するか
   // (リプライは文脈依存の断片が多いので、コーパスが荒れる場合は false にする)
   includeReplies: true,
-  // 学習するノートの公開範囲: "public" | "home" | "followers" | "specified"
-  learnVisibilities: ["public", "home", "followers", "specified"],
 
   // ---- 生成設定 ----
   // 生成ノートの最大文字数 (硬い制限。この長さを超える文は採用されない)
@@ -32,10 +30,27 @@ export default {
   // この確率 (0〜1) で 1 文だけの短いノートを生成する
   shortNoteProbability: 0.3,
 
-  // ---- 除外ワード ----
-  // この配列に含まれる語が生成文に含まれていた場合、その文は棄却する。
+  // ---- 除外ワード (Misskey と X で共通) ----
+  // この配列に含まれる語を含むノート・ツイートは学習しない。
+  // プラットフォームごとの除外ワードは misskey.excludeWords / twitter.excludeWords に書く (こちらと合わせて使われる)。
   // 例: ["foo", "bar"]
   excludeWords: [],
+
+  // ---- Misskey 固有の学習設定 ----
+  misskey: {
+    // 学習するノートの公開範囲: "public" | "home" | "followers" | "specified"
+    learnVisibilities: ["public", "home", "followers", "specified"],
+    // Misskey のノートだけに適用する除外ワード
+    excludeWords: [],
+  },
+
+  // ---- X (Twitter) 固有の学習設定 ----
+  twitter: {
+    // 新しいツイートを取り込む間隔 (分)。X にはストリーミングがないためポーリングする
+    pollIntervalMinutes: 30,
+    // X のツイートだけに適用する除外ワード
+    excludeWords: [],
+  },
 
   // ---- 投稿・返信 ----
   // 定期投稿の公開範囲: "public" | "home" | "followers"

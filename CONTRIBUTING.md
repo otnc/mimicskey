@@ -29,12 +29,12 @@ uv sync       # .venv に SudachiPy が入る
 cp .env.example .env
 ```
 
-`.env` の必須 3 変数を埋める:
+`.env` を埋める (学習対象は `MISSKEY_TARGET_USERS` と `TWITTER_TARGET_USERS` の少なくとも一方):
 
 ```dotenv
 MISSKEY_INSTANCE=https://misskey.io
 MISSKEY_TOKEN=xxxxxxxxxxxxxxxx
-TARGET_USERS=yourname
+MISSKEY_TARGET_USERS=yourname
 ```
 
 ## SUDACHI_BIN の設定
@@ -69,7 +69,7 @@ SUDACHI_BIN=.venv/bin/sudachipy
 npm test
 ```
 
-マルコフ連鎖 (`src/markov.ts`) とテキスト処理 (`src/text.ts`) をテストする。Misskey への接続も SudachiPy の起動もなく、クローン直後から実行できる。
+マルコフ連鎖 (`src/markov.ts`)、テキスト処理 (`src/text.ts`)、設定のパース (`src/config.ts`)、ツイートの学習判定 (`src/twitter-sync.ts`) をテストする。Misskey や X への接続も SudachiPy の起動もなく、クローン直後から実行できる。
 
 ### Bot の動作確認
 
@@ -81,7 +81,7 @@ npm run start     # dist/index.js を実行
 npm run dev
 ```
 
-起動すると実際の Misskey インスタンスに接続する。初回は TARGET_USERS の過去ノートのバックフィルが走るため数分かかる。返信・投稿も実際に行われるため、誤動作を防ぎたい場合は `.env` に次を加えておく:
+起動すると実際の Misskey インスタンスに接続する。初回は学習対象ユーザーの過去ノート・ツイートのバックフィルが走るため数分かかる。返信・投稿も実際に行われるため、誤動作を防ぎたい場合は `.env` に次を加えておく:
 
 ```dotenv
 REPLY_ENABLED=false          # メンションへの返信を止める
