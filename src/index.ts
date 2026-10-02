@@ -4,6 +4,8 @@ import { dirname } from "node:path";
 import { loadConfig } from "./config.js";
 import { createStore } from "./db.js";
 import { createMisskeyClient } from "./misskey.js";
+import { createTwitterClient } from "./twitter.js";
+import { getOrCreateInstanceId } from "./instance-id.js";
 import { createTokenizer } from "./tokenizer.js";
 import { createBot } from "./bot.js";
 import { log } from "./logger.js";
@@ -18,7 +20,13 @@ const tokenizer = createTokenizer({
   mode: cfg.sudachiMode,
   dictType: cfg.sudachiDictType,
 });
-const bot = createBot({ cfg, store, client, tokenizer });
+const bot = createBot({
+  cfg,
+  store,
+  client,
+  twitter: createTwitterClient(getOrCreateInstanceId(store)),
+  tokenizer,
+});
 
 const shutdown = () => {
   log.info("シャットダウンします");

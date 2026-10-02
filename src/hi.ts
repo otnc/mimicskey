@@ -17,10 +17,10 @@ const intEnv = (name: string, fallback: number) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
-// MISSKEY_INSTANCE / MISSKEY_TOKEN / TARGET_USERS がなくても動くよう、ダミー値をセットしてから loadConfig する。
+// MISSKEY_INSTANCE / MISSKEY_TOKEN / MISSKEY_TARGET_USERS がなくても動くよう、ダミー値をセットしてから loadConfig する。
 process.env["MISSKEY_INSTANCE"] ??= "https://example.com";
 process.env["MISSKEY_TOKEN"] ??= "dummy";
-process.env["TARGET_USERS"] ??= "dummy";
+process.env["MISSKEY_TARGET_USERS"] ??= "dummy";
 
 const cfg = await loadConfig();
 

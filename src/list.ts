@@ -1,6 +1,7 @@
 import type { Config } from "./config.js";
 import type { MisskeyClient } from "./misskey.js";
 import type { Store } from "./db.js";
+import { misskeyUserKey } from "./misskey-sync.js";
 import { log } from "./logger.js";
 
 // 学習対象ユーザーを入れる非公開ユーザーリストを用意する。
@@ -25,8 +26,8 @@ export const ensureLearningList = async (deps: {
   const { client, store, cfg } = deps;
 
   // 対象ユーザーの ID を解決済みの state から集める。
-  const targetIds = cfg.targetUsers.map((user) => {
-    const userKey = user.host ? `${user.username}@${user.host}` : user.username;
+  const targetIds = cfg.misskey.targetUsers.map((user) => {
+    const userKey = misskeyUserKey(user);
     const userId = store.getState(`uid:${userKey}`);
     if (!userId) {
       throw new Error(`ユーザー ${userKey} の ID が未解決です (同期に失敗しています)`);

@@ -1,4 +1,4 @@
-import type { Config, TargetUser } from "./config.js";
+import type { Config, MisskeyTargetUser } from "./config.js";
 import type { MisskeyClient, Note } from "./misskey.js";
 import type { NoteRow, Store } from "./db.js";
 import { log } from "./logger.js";
@@ -7,43 +7,15 @@ import { log } from "./logger.js";
 // 型述語で絞り込んだ先では text が string になっている。
 export const isLearnable = (note: Note, cfg: Config): note is Note & { text: string } => {
   if (!note.text || note.text.trim().length === 0) return false;
-  if (!cfg.learnVisibilities.has(note.visibility)) return false;
+  if (!cfg.misskey.learnVisibilities.has(note.visibility)) return false;
   if (!cfg.includeReplies && note.replyId != null) return false;
-  if (cfg.excludeWords.length > 0 && cfg.excludeWords.some((w) => note.text!.includes(w))) {
-    return false;
-  }
-  return true;
-};
-
-// 学習に影響する設定のフィンガープリントを返す。
-// これが変わったとき、学習データをリセットして再取得する。
-const learnConfigFingerprint = (cfg: Config): string =>
-  JSON.stringify({
-    excludeWords: [...cfg.excludeWords].sort(),
-    learnVisibilities: [...cfg.learnVisibilities].sort(),
-    includeReplies: cfg.includeReplies,
-    targetUsers: cfg.targetUsers
-      .map((u) => (u.host ? `${u.username}@${u.host}` : u.username))
-      .sort(),
-  });
-
-// 学習データ (ノートと同期カーソル) を無条件にクリアし、フィンガープリントを更新する。
-// uid:* (ユーザー ID キャッシュ) と lastPostAt は残す。
-export const resetLearningData = (store: Store, cfg: Config) => {
-  store.clearLearningData();
-  store.setState("learnConfigFingerprint", learnConfigFingerprint(cfg));
-};
-
-// 学習設定が変わっていたら学習データをクリアする。戻り値はクリアしたかどうか。
-export const resetIfLearnConfigChanged = (store: Store, cfg: Config): boolean => {
-  if (store.getState("learnConfigFingerprint") === learnConfigFingerprint(cfg)) return false;
-  resetLearningData(store, cfg);
-  log.info("学習設定が変更されたためデータをリセットします (バックフィルを実行)");
+  if (cfg.misskey.excludeWords.some((w) => note.text!.includes(w))) return false;
   return true;
 };
 
 // ノート 1 件を学習として保存する (WebSocket の userList チャンネルから受信したとき)。
 // カーソル (cursor:userId) も進める。Misskey のノート ID は時刻順に並ぶので、辞書順の比較で新しい方を残せばよい。
+// リアルタイムに届くノートは常に開始日 (sinceMs) より新しいので、ここでは開始日を見ない。
 // 戻り値は新規に保存できたかどうか。
 export const learnNote = (store: Store, note: Note, cfg: Config) => {
   if (!isLearnable(note, cfg)) return false;
@@ -57,9 +29,12 @@ export const learnNote = (store: Store, note: Note, cfg: Config) => {
   return added;
 };
 
+export const misskeyUserKey = (user: MisskeyTargetUser) =>
+  user.host ? `${user.username}@${user.host}` : user.username;
+
 // ユーザー ID を解決して state に置く (API を叩くのは最初の 1 回だけ)。
-const resolveUserId = async (client: MisskeyClient, store: Store, user: TargetUser) => {
-  const userKey = user.host ? `${user.username}@${user.host}` : user.username;
+const resolveUserId = async (client: MisskeyClient, store: Store, user: MisskeyTargetUser) => {
+  const userKey = misskeyUserKey(user);
   let userId = store.getState(`uid:${userKey}`);
   if (!userId) {
     userId = (await client.resolveUser(user.username, user.host)).id;
@@ -68,16 +43,20 @@ const resolveUserId = async (client: MisskeyClient, store: Store, user: TargetUs
   return { userKey, userId };
 };
 
-const learnableRows = (page: Note[], cfg: Config): NoteRow[] =>
+const isBeforeSince = (note: Note, sinceMs: number | undefined) =>
+  sinceMs !== undefined && Date.parse(note.createdAt) < sinceMs;
+
+const learnableRows = (page: Note[], cfg: Config, sinceMs: number | undefined): NoteRow[] =>
   page
     .filter((n) => isLearnable(n, cfg))
+    .filter((n) => !isBeforeSince(n, sinceMs))
     .map((n) => ({ id: n.id, userId: n.userId, text: n.text, createdAt: n.createdAt }));
 
-// バックフィル: 新しい方から 100 件ずつ LEARN_NOTES_LIMIT まで遡る。
+// バックフィル: 新しい方から 100 件ずつ、LEARN_NOTES_LIMIT か開始日 (sinceMs) に届くまで遡る。
 const backfillUserNotes = async (
   client: MisskeyClient,
   store: Store,
-  userKey: string,
+  user: MisskeyTargetUser,
   userId: string,
   cfg: Config,
 ) => {
@@ -89,13 +68,13 @@ const backfillUserNotes = async (
     const page = await client.userNotes(userId, { untilId, limit: 100 });
     if (page.length === 0) break;
     if (!newest) newest = page[0].id;
-    added += store.upsertNotes(learnableRows(page, cfg));
+    added += store.upsertNotes(learnableRows(page, cfg, user.sinceMs));
     fetched += page.length;
-    if (page.length < 100) break;
+    if (page.length < 100 || isBeforeSince(page[page.length - 1], user.sinceMs)) break;
     untilId = page[page.length - 1].id;
   }
   if (newest) store.setState(`cursor:${userId}`, newest);
-  log.info(`バックフィル ${userKey}: ${fetched} 件取得、新規 ${added} 件保存`);
+  log.info(`バックフィル ${misskeyUserKey(user)}: ${fetched} 件取得、新規 ${added} 件保存`);
   return added;
 };
 
@@ -103,7 +82,7 @@ const backfillUserNotes = async (
 const diffUserNotes = async (
   client: MisskeyClient,
   store: Store,
-  userKey: string,
+  user: MisskeyTargetUser,
   userId: string,
   cursor: string,
   cfg: Config,
@@ -115,12 +94,12 @@ const diffUserNotes = async (
     const page = await client.userNotes(userId, { sinceId: cursor, untilId, limit: 100 });
     if (page.length === 0) break;
     if (!newest) newest = page[0].id;
-    added += store.upsertNotes(learnableRows(page, cfg));
+    added += store.upsertNotes(learnableRows(page, cfg, user.sinceMs));
     if (page.length < 100) break;
     untilId = page[page.length - 1].id;
   }
   if (newest) store.setState(`cursor:${userId}`, newest);
-  if (added > 0) log.info(`同期 ${userKey}: +${added} 件`);
+  if (added > 0) log.info(`同期 ${misskeyUserKey(user)}: +${added} 件`);
   return added;
 };
 
@@ -130,13 +109,13 @@ const diffUserNotes = async (
 export const syncUserNotes = async (
   client: MisskeyClient,
   store: Store,
-  user: TargetUser,
+  user: MisskeyTargetUser,
   cfg: Config,
 ) => {
-  const { userKey, userId } = await resolveUserId(client, store, user);
+  const { userId } = await resolveUserId(client, store, user);
   const cursor = store.getState(`cursor:${userId}`);
-  if (!cursor) return backfillUserNotes(client, store, userKey, userId, cfg);
-  return diffUserNotes(client, store, userKey, userId, cursor, cfg);
+  if (!cursor) return backfillUserNotes(client, store, user, userId, cfg);
+  return diffUserNotes(client, store, user, userId, cursor, cfg);
 };
 
 // Bot の接続・再接続時の回収用: カーソル以降の差分だけ取る。
@@ -144,11 +123,11 @@ export const syncUserNotes = async (
 export const catchUpUserNotes = async (
   client: MisskeyClient,
   store: Store,
-  user: TargetUser,
+  user: MisskeyTargetUser,
   cfg: Config,
 ) => {
-  const { userKey, userId } = await resolveUserId(client, store, user);
+  const { userId } = await resolveUserId(client, store, user);
   const cursor = store.getState(`cursor:${userId}`);
   if (!cursor) return 0;
-  return diffUserNotes(client, store, userKey, userId, cursor, cfg);
+  return diffUserNotes(client, store, user, userId, cursor, cfg);
 };

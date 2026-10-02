@@ -2,11 +2,14 @@ import type { Config } from "./config.js";
 import type { Store } from "./db.js";
 import type { MisskeyClient, MkNotification, Note } from "./misskey.js";
 import type { Tokenizer } from "./tokenizer.js";
+import type { TwitterClient } from "./twitter.js";
 import type { MarkovChain } from "./markov.js";
 import { createMarkovChain } from "./markov.js";
 import QuickLRU from "quick-lru";
 import { cleanNoteText, splitSentences } from "./text.js";
-import { learnNote, syncUserNotes, catchUpUserNotes, resetIfLearnConfigChanged } from "./sync.js";
+import { learnNote, syncUserNotes, catchUpUserNotes } from "./misskey-sync.js";
+import { resetIfLearnConfigChanged } from "./learn-reset.js";
+import { syncTwitterUser } from "./twitter-sync.js";
 import { fetchNotificationsSince, handleNotification, markNotificationsSeen } from "./notify.js";
 import { ensureLearningList } from "./list.js";
 import { createBotStream } from "./stream.js";
@@ -51,21 +54,24 @@ const getNextIntervalMs = (intervalMs: number): number => {
 // - main チャンネル: 通知をリアルタイムに受信し、返信・リアクションする
 // - 投稿: POST_SCHEDULE が設定されているときは JST 固定時刻、未設定のときは JST XX:00 境界のインターバルで投稿する
 // ノートと通知の取りこぼしは、接続時 (_connected_) にカーソルからの差分取得で回収する。
+// X (Twitter) にはストリーミングがないため、学習対象のツイートだけは twitter.pollIntervalMinutes ごとのポーリングで取り込む。
 // 初回起動時だけノートのバックフィルを行う (npm run learn でも手動で取得できる)。
 // チェーンの再構築 (SudachiPy のバッチ呼び出し 1 回) は、新規ノートが保存されたときだけ行う。
 export const createBot = (deps: {
   cfg: Config;
   store: Store;
   client: MisskeyClient;
+  twitter: TwitterClient;
   tokenizer: Tokenizer;
 }) => {
-  const { cfg, store, client, tokenizer } = deps;
+  const { cfg, store, client, twitter, tokenizer } = deps;
 
   // closure の中に閉じ込めた可変状態。
   let chain: MarkovChain | null = null;
   let chainDirty = true;
   let stream: ReturnType<typeof createBotStream> | null = null;
   let postTimer: ReturnType<typeof setTimeout> | null = null;
+  let twitterTimer: ReturnType<typeof setTimeout> | null = null;
   let botUserId = "";
 
   // 処理済み通知 ID の重複排除 (WebSocket と取りこぼし回収の両方から来る)。古いものから上限 500 件で追い出す。
@@ -145,6 +151,23 @@ export const createBot = (deps: {
     }, delay);
   };
 
+  // X の学習対象ユーザーのツイートを取り込む。1 ユーザーの失敗 (FxTwitter の障害など) で他のユーザーや Bot 本体を止めない。
+  const syncTwitterUsers = async () => {
+    for (const user of cfg.twitter.targetUsers) {
+      try {
+        if ((await syncTwitterUser(twitter, store, user, cfg)) > 0) chainDirty = true;
+      } catch (err) {
+        log.error(`@${user.screenName} (X) のツイート取得に失敗しました`, err);
+      }
+    }
+  };
+
+  const scheduleTwitterPoll = () => {
+    twitterTimer = setTimeout(() => {
+      void syncTwitterUsers().finally(scheduleTwitterPoll);
+    }, cfg.twitter.pollIntervalMs);
+  };
+
   // 通知 1 件の処理本体。処理したらカーソルを進める。
   const processOne = async (n: MkNotification) => {
     if (seenIds.has(n.id)) return;
@@ -181,7 +204,7 @@ export const createBot = (deps: {
   // 接続時 (初回を含む): 切れていた間に取りこぼしたノートと通知をカーソルから回収する。
   const onReconnected = () => {
     void (async () => {
-      for (const user of cfg.targetUsers) {
+      for (const user of cfg.misskey.targetUsers) {
         await catchUpUserNotes(client, store, user, cfg);
       }
       await catchUpNotifications();
@@ -207,7 +230,7 @@ export const createBot = (deps: {
 
     // 初回はバックフィル、2 回目以降は前回からの差分。
     // この中で対象ユーザーの ID も解決して state に置く。
-    for (const user of cfg.targetUsers) {
+    for (const user of cfg.misskey.targetUsers) {
       await syncUserNotes(client, store, user, cfg);
     }
 
@@ -223,6 +246,9 @@ export const createBot = (deps: {
       onReconnected,
     });
 
+    // X のバックフィルは件数が多いと時間がかかるので、WebSocket に繋いだ後にバックグラウンドで進める。
+    if (cfg.twitter.targetUsers.length > 0) void syncTwitterUsers().finally(scheduleTwitterPoll);
+
     scheduleNextPost();
     const scheduleDesc = cfg.postSchedule
       ? `スケジュール ${cfg.postSchedule.map(([h, m]) => `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`).join(", ")}`
@@ -232,6 +258,7 @@ export const createBot = (deps: {
 
   const stop = () => {
     if (postTimer) clearTimeout(postTimer);
+    if (twitterTimer) clearTimeout(twitterTimer);
     stream?.close();
   };
 

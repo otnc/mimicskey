@@ -1,15 +1,18 @@
 # mimicskey
 
-指定したユーザーのノートを学習してマルコフ連鎖で文を生成し、指定した時刻または間隔で投稿する Misskey Bot。メンション・リプライ・引用には返信し、renote にはリアクションを返す。
+指定したユーザーの Misskey のノートと X (Twitter) のツイートを学習してマルコフ連鎖で文を生成し、指定した時刻または間隔で投稿する Misskey Bot。メンション・リプライ・引用には返信し、renote にはリアクションを返す。
 
 VPS 上で Node.js 24+ と pm2 で動かす。Rust のビルドも Python のグローバル環境も不要で、`npm install` と `uv sync` の 2 コマンドでセットアップが完了する。
 
 ## できること
 
 - 指定ユーザー (複数可) のノートを全件取得して学習し、その後もリアルタイムに学習を続ける
+- X (Twitter) のユーザー (複数可) のツイートも学習元にできる。リツイートを除く本人のツイートを遡って取得し、その後も定期的に取り込む
+- ユーザーごとに、指定した日付以降の投稿だけを学習できる
+- 除外ワードは共通の設定に加えて、Misskey と X で別々にも設定できる
 - 指定した時刻 (`POST_SCHEDULE`) または間隔 (`POST_INTERVAL_MINUTES`) で、学習内容を再結合した文を投稿する
 - 設定した確率で 1 文だけの短いノートを生成する (`SHORT_NOTE_PROBABILITY`)
-- 学習するノートの公開範囲を絞り込める (`LEARN_VISIBILITIES`)
+- 学習するノートの公開範囲を絞り込める (`misskey.learnVisibilities`)
 - メンション・リプライ・引用には生成文で返信する (相手のノートの名詞から始めるので話題に沿う)
 - renote にはリアクションを付ける
 
@@ -61,13 +64,18 @@ cp .env.example .env
 nano .env
 ```
 
-`.env` の必須項目は 3 つ:
+`.env` には Bot アカウントの 2 項目と、学習対象を書く。学習対象は `MISSKEY_TARGET_USERS` と `TWITTER_TARGET_USERS` の少なくとも一方が必須:
 
 ```dotenv
 MISSKEY_INSTANCE=https://misskey.io
 MISSKEY_TOKEN=xxxxxxxxxxxxxxxx
-TARGET_USERS=user1,user2@example.instance
+MISSKEY_TARGET_USERS=user1,user2@example.instance:2024/01/01
+TWITTER_TARGET_USERS=x_user1,x_user2:2025/04/01
 ```
+
+末尾の `:yyyy/mm/dd` は任意で、付けたユーザーは JST のその日 0:00 以降の投稿だけを学習する。
+
+X のツイートは [FxTwitter](https://github.com/FxEmbed/FxEmbed) の公開 API から [fxtwitter](https://www.npmjs.com/package/fxtwitter) パッケージで取得するため、X のアカウントやトークンは要らない。鍵アカウントのツイートは取得できない。
 
 pm2 から起動する場合のみ、`SUDACHI_BIN` に `.venv` 内の絶対パスを指定する (pm2 からは PATH が見えないため):
 
@@ -95,47 +103,53 @@ pm2 save        # 再起動後に pm2 resurrect で復帰させる場合
 
 `.env.example` に全変数と既定値がある。主要なもの:
 
-| 変数                     | 必須 | 既定               | 説明                                                                                                             |
-| ------------------------ | ---- | ------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `MISSKEY_INSTANCE`       | はい | -                  | Bot アカウントがいるインスタンスの URL                                                                           |
-| `MISSKEY_TOKEN`          | はい | -                  | アクセストークン                                                                                                 |
-| `TARGET_USERS`           | はい | -                  | 学習対象。カンマ区切りで `username` または `username@host`                                                       |
-| `POST_SCHEDULE`          |      | (未設定)           | 投稿する時刻。`00:00,12:00` のように HH:MM のカンマ区切りで指定。設定すると `POST_INTERVAL_MINUTES` は無視される |
-| `POST_INTERVAL_MINUTES`  |      | 60                 | 定期投稿の間隔 (分)。`POST_SCHEDULE` が未設定のときのみ有効                                                      |
-| `LEARN_NOTES_LIMIT`      |      | 5000               | 学習に使う最大ノート数                                                                                           |
-| `LEARN_INCLUDE_REPLIES`  |      | true               | 対象ユーザーのリプライも学習するか                                                                               |
-| `LEARN_VISIBILITIES`     |      | すべて             | 学習するノートの公開範囲。`public,home,followers,specified` をカンマ区切りで指定                                 |
-| `MAX_NOTE_LENGTH`        |      | 140                | 生成ノートの最大文字数 (硬い制限)                                                                                |
-| `TARGET_NOTE_LENGTH`     |      | 60                 | 生成文の採点基準にする目標文字数。満たない間は文を足していく                                                     |
-| `MAX_SENTENCES`          |      | 3                  | 1 ノートの最大文数                                                                                               |
-| `SHORT_NOTE_PROBABILITY` |      | 0.3                | この確率で 1 文だけの短いノートを生成する (0〜1)                                                                 |
-| `SUDACHI_BIN`            |      | `sudachipy`        | SudachiPy CLI のパス (pm2 からは `.venv` 内の絶対パス推奨)                                                       |
-| `SUDACHI_MODE`           |      | C                  | 分割単位 (A / B / C)。いつでも切り替え可能                                                                       |
-| `SUDACHI_DICT_TYPE`      |      | (SudachiPy の既定) | 辞書種別 (small / core / full)                                                                                   |
-| `REPLY_ENABLED`          |      | true               | メンション等への返信を行うか                                                                                     |
-| `RENOTE_EMOJI`           |      | `:thinking:`       | renote に付けるリアクション                                                                                      |
-| `LOG_LEVEL`              |      | info               | ログレベル (trace / debug / info / warn / error / fatal)                                                         |
-| `LOG_PRETTY`             |      | true               | false で pino-pretty を通さず生の JSON Lines を出力する (ログ収集基盤に流す場合など)                             |
+| 変数                                            | 必須 | 既定               | 説明                                                                                                                          |
+| ----------------------------------------------- | ---- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `MISSKEY_INSTANCE`                              | はい | -                  | Bot アカウントがいるインスタンスの URL                                                                                        |
+| `MISSKEY_TOKEN`                                 | はい | -                  | アクセストークン                                                                                                              |
+| `MISSKEY_TARGET_USERS`                          | ※    | -                  | Misskey の学習対象。カンマ区切りで `username` または `username@host`。末尾に `:yyyy/mm/dd` を付けるとその日以降だけを学習する |
+| `TWITTER_TARGET_USERS`                          | ※    | -                  | X の学習対象。カンマ区切りのユーザー名 (先頭の `@` は省略可)。末尾に `:yyyy/mm/dd` を付けるとその日以降だけを学習する         |
+| `POST_SCHEDULE`                                 |      | (未設定)           | 投稿する時刻。`00:00,12:00` のように HH:MM のカンマ区切りで指定。設定すると `POST_INTERVAL_MINUTES` は無視される              |
+| `POST_INTERVAL_MINUTES`                         |      | 60                 | 定期投稿の間隔 (分)。`POST_SCHEDULE` が未設定のときのみ有効                                                                   |
+| `learnNotesLimit`                               |      | 5000               | 学習に使う最大ノート数。バックフィルではユーザーごとにこの件数まで遡る                                                        |
+| `includeReplies`                                |      | true               | 対象ユーザーのリプライも学習するか (Misskey と X で共通)                                                                      |
+| `excludeWords`                                  |      | `[]`               | この語を含むノート・ツイートを学習しない (Misskey と X で共通)                                                                |
+| `misskey.excludeWords` / `twitter.excludeWords` |      | `[]`               | Misskey / X だけに適用する除外ワード。共通の `excludeWords` と合わせて使われる                                                |
+| `misskey.learnVisibilities`                     |      | すべて             | 学習するノートの公開範囲。`["public", "home", "followers", "specified"]` から選ぶ                                             |
+| `twitter.pollIntervalMinutes`                   |      | 30                 | X の新しいツイートを取り込む間隔 (分)                                                                                         |
+| `MAX_NOTE_LENGTH`                               |      | 140                | 生成ノートの最大文字数 (硬い制限)                                                                                             |
+| `TARGET_NOTE_LENGTH`                            |      | 60                 | 生成文の採点基準にする目標文字数。満たない間は文を足していく                                                                  |
+| `MAX_SENTENCES`                                 |      | 3                  | 1 ノートの最大文数                                                                                                            |
+| `SHORT_NOTE_PROBABILITY`                        |      | 0.3                | この確率で 1 文だけの短いノートを生成する (0〜1)                                                                              |
+| `SUDACHI_BIN`                                   |      | `sudachipy`        | SudachiPy CLI のパス (pm2 からは `.venv` 内の絶対パス推奨)                                                                    |
+| `SUDACHI_MODE`                                  |      | C                  | 分割単位 (A / B / C)。いつでも切り替え可能                                                                                    |
+| `SUDACHI_DICT_TYPE`                             |      | (SudachiPy の既定) | 辞書種別 (small / core / full)                                                                                                |
+| `REPLY_ENABLED`                                 |      | true               | メンション等への返信を行うか                                                                                                  |
+| `RENOTE_EMOJI`                                  |      | `:thinking:`       | renote に付けるリアクション                                                                                                   |
+| `LOG_LEVEL`                                     |      | info               | ログレベル (trace / debug / info / warn / error / fatal)                                                                      |
+| `LOG_PRETTY`                                    |      | true               | false で pino-pretty を通さず生の JSON Lines を出力する (ログ収集基盤に流す場合など)                                          |
 
 ## 日常の操作
 
-| やりたいこと              | コマンド                                                                                        |
-| ------------------------- | ----------------------------------------------------------------------------------------------- |
-| ログを見る                | `pm2 logs mimicskey`                                                                            |
-| 再起動 (設定変更後に必要) | `pm2 restart mimicskey`                                                                         |
-| 停止                      | `pm2 stop mimicskey`                                                                            |
-| 学習対象ユーザーの変更    | `.env` の `TARGET_USERS` を編集して再起動。学習リストは次回起動時に自動で同期される             |
-| 投稿スケジュールの変更    | `.env` の `POST_SCHEDULE` または `POST_INTERVAL_MINUTES` を編集して再起動                       |
-| 分割単位の変更 (C→B など) | `.env` の `SUDACHI_MODE` を編集して再起動。DB の再作成は不要 (次のチェーン再構築から反映)       |
-| 学習データのリセット      | `npm run learn -- --clear` (クリアしてバックフィルし直す)。Bot を再起動すると新しいデータで動く |
-| 学習データの再取得        | `npm run learn` (未取得ユーザーはバックフィル、取得済みは差分取得)                              |
-| アップデート              | `git pull && npm ci && uv sync && npm run build && pm2 restart mimicskey`                       |
+| やりたいこと              | コマンド                                                                                                             |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| ログを見る                | `pm2 logs mimicskey`                                                                                                 |
+| 再起動 (設定変更後に必要) | `pm2 restart mimicskey`                                                                                              |
+| 停止                      | `pm2 stop mimicskey`                                                                                                 |
+| 学習対象ユーザーの変更    | `.env` の `MISSKEY_TARGET_USERS` / `TWITTER_TARGET_USERS` を編集して再起動。学習リストは次回起動時に自動で同期される |
+| 投稿スケジュールの変更    | `.env` の `POST_SCHEDULE` または `POST_INTERVAL_MINUTES` を編集して再起動                                            |
+| 分割単位の変更 (C→B など) | `.env` の `SUDACHI_MODE` を編集して再起動。DB の再作成は不要 (次のチェーン再構築から反映)                            |
+| 学習データのリセット      | `npm run learn -- --clear` (クリアしてバックフィルし直す)。Bot を再起動すると新しいデータで動く                      |
+| 学習データの再取得        | `npm run learn` (未取得ユーザーはバックフィル、取得済みは差分取得)                                                   |
+| アップデート              | `git pull && npm ci && uv sync && npm run build && pm2 restart mimicskey`                                            |
 
 ## 動作の流れ
 
 定期ポーリングなしで、すべて WebSocket 駆動で動く。
 
-**ノートの学習 (userList チャンネル)**: 学習対象ユーザーを入れた非公開ユーザーリストを Bot が自動で作成・維持し (設定の TARGET_USERS に合わせて追加・削除)、そのリストの userList チャンネルでノートをリアルタイムに受信して SQLite に保存する。リストは自分にしか見えないので、フォローのような社会的な副作用もない。初回起動時だけ `LEARN_NOTES_LIMIT` 件まで遡ってバックフィルする。
+**ノートの学習 (userList チャンネル)**: 学習対象ユーザーを入れた非公開ユーザーリストを Bot が自動で作成・維持し (設定の MISSKEY_TARGET_USERS に合わせて追加・削除)、そのリストの userList チャンネルでノートをリアルタイムに受信して SQLite に保存する。リストは自分にしか見えないので、フォローのような社会的な副作用もない。初回起動時だけ `LEARN_NOTES_LIMIT` 件まで遡ってバックフィルする。
+
+**ツイートの学習 (ポーリング)**: X にはストリーミングがないため、`twitter.pollIntervalMinutes` ごとに FxTwitter の検索 API で `from:ユーザー名` を引き、前回取得した最新ツイート以降 (`since_id`) を取り込む。タイムライン API は直近 120 件程度しか遡れないが、検索ならリツイートを含まない本人のツイートを全期間遡れる。初回だけ `learnNotesLimit` 件 (開始日を指定したユーザーはその日) まで遡ってバックフィルする。件数が多いと時間がかかるので、WebSocket に接続した後にバックグラウンドで進める。
 
 **通知への反応 (main チャンネル)**: 通知をリアルタイムに受信する。mention / reply / quote には生成文で返信し、renote にはリアクションを付ける。起動時は既存の通知を見済みにするだけで反応しない (何日も前のメンションに一斉に返信しないため)。
 
@@ -164,7 +178,7 @@ pm2 save        # 再起動後に pm2 resurrect で復帰させる場合
 - specified (ダイレクト) ノートへの返信は、送り主だけに見える直接ノートで行う
 - 返信の公開範囲は相手のノートを超えない
 - renote 通知が持っているのは renote された側 (自分) のノートなので、`notes/renotes` で renote した側を引き当ててからリアクションを付ける
-- 学習用ユーザーリストは `mimicskey-<6文字>` の形式で初回起動時に自動生成される。名前は DB に保存され、以降の起動でも同じリストを使い続ける。手動で中身を変えても、次回起動時に TARGET_USERS に合わせて元に戻る
+- 学習用ユーザーリストは `mimicskey-<6文字>` の形式で初回起動時に自動生成される。名前は DB に保存され、以降の起動でも同じリストを使い続ける。手動で中身を変えても、次回起動時に MISSKEY_TARGET_USERS に合わせて元に戻る
 - 分割単位 (SUDACHI_MODE) と辞書 (SUDACHI_DICT_TYPE) はいつでも切り替えられる。ノートは生のテキストとして DB に保存され、チェーンの再構築のたびに再トークナイズされるため、設定変更は次の再構築から反映される (再起動だけでよく、データの入れ直しは不要)
 
 ## 開発
