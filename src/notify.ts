@@ -52,17 +52,18 @@ export const markNotificationsSeen = async (client: MisskeyClient, store: Store)
 
 // カーソルより新しい通知をすべて取得し、古い方から並べて返す。
 // WebSocket が切れている間に取りこぼした通知の回収に使う。
+// sinceId だけを指定すると Misskey は古い順に返すので、各ページの最後の ID を次の sinceId にして新しい方へ進む。
 export const fetchNotificationsSince = async (client: MisskeyClient, sinceId: string) => {
   const all: MkNotification[] = [];
-  let untilId: string | undefined;
+  let cursor = sinceId;
   for (;;) {
-    const page = await client.notifications({ sinceId, untilId, limit: 100 });
+    const page = await client.notifications({ sinceId: cursor, limit: 100 });
     if (page.length === 0) break;
     all.push(...page);
     if (page.length < 100) break;
-    untilId = page[page.length - 1].id;
+    cursor = page[page.length - 1].id;
   }
-  return all.reverse();
+  return all;
 };
 
 // 通知 1 件に反応する。mention / reply / quote には生成文で返信し、renote には renote したノートにリアクションを付ける。

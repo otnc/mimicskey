@@ -15,7 +15,8 @@ export const createTwitterClient = (instanceId: string) => {
   return {
     // 新しい順の検索結果。1 ページは 20 件前後で、count を指定しても増えない。
     // 結果が尽きても cursor.bottom は null にならないので、終端は空の results で判断する。
-    searchLatest: (query: string, cursor?: string) => fx.search(query, { feed: "latest", cursor }),
+    searchLatest: (query: string, options: { cursor?: string; signal?: AbortSignal } = {}) =>
+      fx.search(query, { feed: "latest", ...options }),
   };
 };
 

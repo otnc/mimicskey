@@ -15,6 +15,9 @@ import { ensureLearningList } from "./list.js";
 import { createBotStream } from "./stream.js";
 import { log } from "./logger.js";
 
+// X の取得に失敗したユーザーがいたとき、通常のポーリング間隔より早く再試行するまでの待ち時間。
+const TWITTER_RETRY_DELAY_MS = 5 * 60_000;
+
 // setTimeout の上限 (約 24.8 日)。これを超える待ちは分割する。
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
@@ -74,13 +77,27 @@ export const createBot = (deps: {
   let twitterTimer: ReturnType<typeof setTimeout> | null = null;
   let botUserId = "";
 
+  // stop() で中断を伝える。X の取得は fetch ごと中断し、Misskey の同期はページの区切りで止める。
+  const abort = new AbortController();
+  const { signal } = abort;
+
+  // 走っている取得・投稿・回収の処理。stop() は DB を閉じる前にこれらが終わるのを待つ。
+  // 渡す Promise は reject しないもの (catch 済み) に限る。
+  const inFlight = new Set<Promise<void>>();
+  const track = (task: Promise<void>) => {
+    inFlight.add(task);
+    void task.finally(() => inFlight.delete(task));
+  };
+
+  // 中断による失敗 (Ctrl+C など) はエラーとして記録しない。
+  const logUnlessStopping = (message: string) => (err: unknown) => {
+    if (!signal.aborted) log.error(message, err);
+  };
+
   // 処理済み通知 ID の重複排除 (WebSocket と取りこぼし回収の両方から来る)。古いものから上限 500 件で追い出す。
   const seenIds = new QuickLRU<string, true>({ maxSize: 500 });
 
-  // チェーンを構築する (済みで新規ノートがなければ使い回す)。
-  const ensureChain = async () => {
-    if (chain && !chainDirty) return chain;
-
+  const buildChain = async () => {
     const texts = store.loadRecentTexts(cfg.learnNotesLimit);
     if (texts.length === 0) {
       log.warn("まだ学習するノートがありません");
@@ -97,11 +114,31 @@ export const createBot = (deps: {
     const next = createMarkovChain();
     next.build(tokenized);
     chain = next;
-    chainDirty = false;
     log.info(
       `チェーン再構築: ${texts.length} ノート -> ${sentences.length} 文 (${Date.now() - startedAt}ms)`,
     );
     return chain;
+  };
+
+  // チェーンを構築し直す。構築中に届いたノートで再び dirty になれるよう、読み込む前にフラグを下ろす。
+  const rebuildChain = async () => {
+    chainDirty = false;
+    try {
+      return await buildChain();
+    } catch (err) {
+      chainDirty = true;
+      throw err;
+    }
+  };
+
+  // チェーンを返す (済みで新規ノートがなければ使い回す)。投稿と返信から同時に呼ばれても構築は 1 回だけ走る。
+  let building: Promise<MarkovChain | null> | null = null;
+  const ensureChain = () => {
+    if (chain && !chainDirty) return Promise.resolve(chain);
+    building ??= rebuildChain().finally(() => {
+      building = null;
+    });
+    return building;
   };
 
   // 1 回投稿する。生成に失敗しても lastPostAt は更新する
@@ -137,6 +174,7 @@ export const createBot = (deps: {
   // 次の投稿時刻まで待って投稿し、その次をスケジュールする。
   // POST_SCHEDULE が設定されているときは固定時刻で、未設定のときはインターバルで動く。
   const scheduleNextPost = () => {
+    if (signal.aborted) return;
     if (postTimer) clearTimeout(postTimer);
     const nextAt = (() => {
       if (cfg.postSchedule) return getNextScheduleMs(cfg.postSchedule);
@@ -145,38 +183,58 @@ export const createBot = (deps: {
     })();
     const delay = Math.min(Math.max(nextAt - Date.now(), 0), MAX_TIMEOUT_MS);
     postTimer = setTimeout(() => {
-      void postOnce()
-        .catch((err) => log.error("投稿に失敗しました", err))
-        .finally(scheduleNextPost);
+      track(postOnce().catch(logUnlessStopping("投稿に失敗しました")).finally(scheduleNextPost));
     }, delay);
   };
 
   // X の学習対象ユーザーのツイートを取り込む。1 ユーザーの失敗 (FxTwitter の障害など) で他のユーザーや Bot 本体を止めない。
+  // 失敗したユーザーは進捗が保存されているので、次の試行で続きから取る。戻り値は全ユーザーの取得に成功したかどうか。
   const syncTwitterUsers = async () => {
+    let allSucceeded = true;
     for (const user of cfg.twitter.targetUsers) {
+      if (signal.aborted) return false;
       try {
-        if ((await syncTwitterUser(twitter, store, user, cfg)) > 0) chainDirty = true;
+        if ((await syncTwitterUser(twitter, store, user, cfg, signal)) > 0) chainDirty = true;
       } catch (err) {
+        if (signal.aborted) return false;
+        allSucceeded = false;
         log.error(`@${user.screenName} (X) のツイート取得に失敗しました`, err);
       }
     }
+    return allSucceeded;
   };
 
-  const scheduleTwitterPoll = () => {
-    twitterTimer = setTimeout(() => {
-      void syncTwitterUsers().finally(scheduleTwitterPoll);
-    }, cfg.twitter.pollIntervalMs);
+  // X のツイートを取り込み、次の取り込みをスケジュールする。失敗したユーザーがいれば早めに再試行する。
+  const pollTwitter = () => {
+    track(
+      (async () => {
+        const allSucceeded = await syncTwitterUsers();
+        if (signal.aborted) return;
+        const delay = allSucceeded
+          ? cfg.twitter.pollIntervalMs
+          : Math.min(TWITTER_RETRY_DELAY_MS, cfg.twitter.pollIntervalMs);
+        if (!allSucceeded) {
+          log.warn(
+            `X の取得に失敗したユーザーがいるため、${delay / 60_000} 分後に続きから再試行します`,
+          );
+        }
+        twitterTimer = setTimeout(pollTwitter, delay);
+      })().catch(logUnlessStopping("X のツイート取り込みに失敗しました")),
+    );
   };
 
-  // 通知 1 件の処理本体。処理したらカーソルを進める。
+  // 通知 1 件の処理本体。
+  // カーソルは処理の成否や返信の有無にかかわらず進める (失敗した通知も seenIds に入るので、どのみち再処理はしない)。
+  // 回収とリアルタイム受信が前後しても巻き戻らないよう、新しい ID のときだけ進める。
   const processOne = async (n: MkNotification) => {
-    if (seenIds.has(n.id)) return;
+    if (signal.aborted || seenIds.has(n.id)) return;
     seenIds.set(n.id, true);
+    const cursor = store.getState("lastNotificationId");
+    if (!cursor || n.id > cursor) store.setState("lastNotificationId", n.id);
     if (!cfg.replyEnabled) return;
     const active = await ensureChain();
     if (!active) return;
     await handleNotification({ client, chain: active, tokenizer, cfg, botUserId }, n);
-    store.setState("lastNotificationId", n.id);
   };
 
   // 通知の処理は直列に実行する (レート制限の判定をすり抜けさせないため)。
@@ -184,7 +242,7 @@ export const createBot = (deps: {
   const processNotification = (n: MkNotification) => {
     queue = queue
       .then(() => processOne(n))
-      .catch((err) => log.error(`通知 ${n.id} の処理に失敗しました`, err));
+      .catch(logUnlessStopping(`通知 ${n.id} の処理に失敗しました`));
   };
 
   // WebSocket が切れている間に取りこぼした通知を回収する。
@@ -203,12 +261,14 @@ export const createBot = (deps: {
 
   // 接続時 (初回を含む): 切れていた間に取りこぼしたノートと通知をカーソルから回収する。
   const onReconnected = () => {
-    void (async () => {
-      for (const user of cfg.misskey.targetUsers) {
-        await catchUpUserNotes(client, store, user, cfg);
-      }
-      await catchUpNotifications();
-    })().catch((err) => log.error("再接続時の回収に失敗しました", err));
+    track(
+      (async () => {
+        for (const user of cfg.misskey.targetUsers) {
+          if ((await catchUpUserNotes(client, store, user, cfg, signal)) > 0) chainDirty = true;
+        }
+        await catchUpNotifications();
+      })().catch(logUnlessStopping("再接続時の回収に失敗しました")),
+    );
   };
 
   const run = async () => {
@@ -231,12 +291,14 @@ export const createBot = (deps: {
     // 初回はバックフィル、2 回目以降は前回からの差分。
     // この中で対象ユーザーの ID も解決して state に置く。
     for (const user of cfg.misskey.targetUsers) {
-      await syncUserNotes(client, store, user, cfg);
+      await syncUserNotes(client, store, user, cfg, signal);
     }
 
     // 学習用リストを用意してから WebSocket に繋ぐ。
     const { listId } = await ensureLearningList({ client, store, cfg });
     await markNotificationsSeen(client, store);
+    // 起動中に stop() されていたら、接続もタイマーも作らずに終える (作るとプロセスが終了しなくなる)。
+    signal.throwIfAborted();
     stream = createBotStream({
       origin: cfg.misskeyInstance,
       token: cfg.misskeyToken,
@@ -247,7 +309,7 @@ export const createBot = (deps: {
     });
 
     // X のバックフィルは件数が多いと時間がかかるので、WebSocket に繋いだ後にバックグラウンドで進める。
-    if (cfg.twitter.targetUsers.length > 0) void syncTwitterUsers().finally(scheduleTwitterPoll);
+    if (cfg.twitter.targetUsers.length > 0) pollTwitter();
 
     scheduleNextPost();
     const scheduleDesc = cfg.postSchedule
@@ -256,10 +318,13 @@ export const createBot = (deps: {
     log.info(`開始: ノート・通知は WebSocket で受信、投稿は ${scheduleDesc}`);
   };
 
-  const stop = () => {
+  // 新しい処理を止め、走っている処理が終わるのを待つ。呼び出し側はこの後で DB を閉じてよい。
+  const stop = async () => {
+    abort.abort();
     if (postTimer) clearTimeout(postTimer);
     if (twitterTimer) clearTimeout(twitterTimer);
     stream?.close();
+    await Promise.all([...inFlight, queue]);
   };
 
   return { run, stop };

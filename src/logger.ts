@@ -14,6 +14,7 @@ const pinoLogger = pino({
 });
 
 export const log = {
+  debug: (message: string) => pinoLogger.debug(message),
   info: (message: string) => pinoLogger.info(message),
   warn: (message: string) => pinoLogger.warn(message),
   error: (message: string, error?: unknown) => {

@@ -13,8 +13,15 @@ export const isLearnable = (note: Note, cfg: Config): note is Note & { text: str
   return true;
 };
 
+// カーソル (cursor:userId) を進める。Misskey のノート ID は時刻順に並ぶので、辞書順の比較で新しい方を残せばよい。
+// リアルタイム受信と差分同期が並行しても、カーソルが巻き戻らない。
+const advanceCursor = (store: Store, userId: string, noteId: string) => {
+  const cursorKey = `cursor:${userId}`;
+  const cursor = store.getState(cursorKey);
+  if (!cursor || noteId > cursor) store.setState(cursorKey, noteId);
+};
+
 // ノート 1 件を学習として保存する (WebSocket の userList チャンネルから受信したとき)。
-// カーソル (cursor:userId) も進める。Misskey のノート ID は時刻順に並ぶので、辞書順の比較で新しい方を残せばよい。
 // リアルタイムに届くノートは常に開始日 (sinceMs) より新しいので、ここでは開始日を見ない。
 // 戻り値は新規に保存できたかどうか。
 export const learnNote = (store: Store, note: Note, cfg: Config) => {
@@ -23,9 +30,7 @@ export const learnNote = (store: Store, note: Note, cfg: Config) => {
     store.upsertNotes([
       { id: note.id, userId: note.userId, text: note.text, createdAt: note.createdAt },
     ]) > 0;
-  const cursorKey = `cursor:${note.userId}`;
-  const cursor = store.getState(cursorKey);
-  if (!cursor || note.id > cursor) store.setState(cursorKey, note.id);
+  advanceCursor(store, note.userId, note.id);
   return added;
 };
 
@@ -52,33 +57,48 @@ const learnableRows = (page: Note[], cfg: Config, sinceMs: number | undefined): 
     .filter((n) => !isBeforeSince(n, sinceMs))
     .map((n) => ({ id: n.id, userId: n.userId, text: n.text, createdAt: n.createdAt }));
 
+const PROGRESS_LOG_EVERY_PAGES = 5;
+
 // バックフィル: 新しい方から 100 件ずつ、LEARN_NOTES_LIMIT か開始日 (sinceMs) に届くまで遡る。
+// untilId だけを指定すると Misskey は新しい順に返すので、先頭が最新のノート。
 const backfillUserNotes = async (
   client: MisskeyClient,
   store: Store,
   user: MisskeyTargetUser,
   userId: string,
   cfg: Config,
+  signal: AbortSignal,
 ) => {
+  log.info(`バックフィル開始 ${misskeyUserKey(user)}`);
   let untilId: string | undefined;
   let newest: string | null = null;
   let added = 0;
   let fetched = 0;
+  let pages = 0;
   while (fetched < cfg.learnNotesLimit) {
+    signal.throwIfAborted();
     const page = await client.userNotes(userId, { untilId, limit: 100 });
     if (page.length === 0) break;
     if (!newest) newest = page[0].id;
     added += store.upsertNotes(learnableRows(page, cfg, user.sinceMs));
     fetched += page.length;
+    pages++;
+    if (pages % PROGRESS_LOG_EVERY_PAGES === 0) {
+      log.info(
+        `バックフィル中 ${misskeyUserKey(user)}: ${fetched} 件取得、新規 ${added} 件保存 (${page[page.length - 1].createdAt.slice(0, 10)} まで遡り済み)`,
+      );
+    }
     if (page.length < 100 || isBeforeSince(page[page.length - 1], user.sinceMs)) break;
     untilId = page[page.length - 1].id;
   }
-  if (newest) store.setState(`cursor:${userId}`, newest);
-  log.info(`バックフィル ${misskeyUserKey(user)}: ${fetched} 件取得、新規 ${added} 件保存`);
+  if (newest) advanceCursor(store, userId, newest);
+  log.info(`バックフィル完了 ${misskeyUserKey(user)}: ${fetched} 件取得、新規 ${added} 件保存`);
   return added;
 };
 
 // 差分同期: カーソルより新しいノートをすべて取る。
+// sinceId だけを指定すると Misskey は古い順に返すので、各ページの最後の ID を次の sinceId にして新しい方へ進む。
+// カーソルはページごとに進めるので、途中で失敗しても次の同期は続きから取る。
 const diffUserNotes = async (
   client: MisskeyClient,
   store: Store,
@@ -86,19 +106,19 @@ const diffUserNotes = async (
   userId: string,
   cursor: string,
   cfg: Config,
+  signal: AbortSignal,
 ) => {
-  let untilId: string | undefined;
-  let newest: string | null = null;
+  let sinceId = cursor;
   let added = 0;
   for (;;) {
-    const page = await client.userNotes(userId, { sinceId: cursor, untilId, limit: 100 });
+    signal.throwIfAborted();
+    const page = await client.userNotes(userId, { sinceId, limit: 100 });
     if (page.length === 0) break;
-    if (!newest) newest = page[0].id;
     added += store.upsertNotes(learnableRows(page, cfg, user.sinceMs));
+    sinceId = page[page.length - 1].id;
+    advanceCursor(store, userId, sinceId);
     if (page.length < 100) break;
-    untilId = page[page.length - 1].id;
   }
-  if (newest) store.setState(`cursor:${userId}`, newest);
   if (added > 0) log.info(`同期 ${misskeyUserKey(user)}: +${added} 件`);
   return added;
 };
@@ -111,11 +131,12 @@ export const syncUserNotes = async (
   store: Store,
   user: MisskeyTargetUser,
   cfg: Config,
+  signal: AbortSignal,
 ) => {
   const { userId } = await resolveUserId(client, store, user);
   const cursor = store.getState(`cursor:${userId}`);
-  if (!cursor) return backfillUserNotes(client, store, user, userId, cfg);
-  return diffUserNotes(client, store, user, userId, cursor, cfg);
+  if (!cursor) return backfillUserNotes(client, store, user, userId, cfg, signal);
+  return diffUserNotes(client, store, user, userId, cursor, cfg, signal);
 };
 
 // Bot の接続・再接続時の回収用: カーソル以降の差分だけ取る。
@@ -125,9 +146,10 @@ export const catchUpUserNotes = async (
   store: Store,
   user: MisskeyTargetUser,
   cfg: Config,
+  signal: AbortSignal,
 ) => {
   const { userId } = await resolveUserId(client, store, user);
   const cursor = store.getState(`cursor:${userId}`);
   if (!cursor) return 0;
-  return diffUserNotes(client, store, user, userId, cursor, cfg);
+  return diffUserNotes(client, store, user, userId, cursor, cfg, signal);
 };

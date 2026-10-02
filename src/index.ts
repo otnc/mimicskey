@@ -28,15 +28,24 @@ const bot = createBot({
   tokenizer,
 });
 
-const shutdown = () => {
-  log.info("シャットダウンします");
-  bot.stop();
-  store.close();
-};
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+let stopping = false;
 
-bot.run().catch((err) => {
+// 起動中に止められた場合の中断は失敗として扱わない。
+const running = bot.run().catch((err: unknown) => {
+  if (stopping) return;
   log.error("起動に失敗しました", err);
   process.exitCode = 1;
 });
+
+// 走っている処理 (起動処理を含む) が終わってから DB を閉じる。閉じた DB に書き込んで失敗ログが出るのを防ぐ。
+const shutdown = () => {
+  if (stopping) return;
+  stopping = true;
+  log.info("シャットダウンします");
+  void bot
+    .stop()
+    .then(() => running)
+    .finally(() => store.close());
+};
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

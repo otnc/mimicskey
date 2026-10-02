@@ -54,6 +54,10 @@ export const createStore = (path: string) => {
     ).run(key, value);
   };
 
+  const deleteState = (key: string) => {
+    db.prepare("DELETE FROM state WHERE key = ?").run(key);
+  };
+
   // 新しい順に本文を返す。チェーンの再構築に使う。
   const loadRecentTexts = (limit: number) =>
     (
@@ -67,17 +71,18 @@ export const createStore = (path: string) => {
     return row.c;
   };
 
-  // 学習設定変更時に呼ぶ: ノートと同期カーソルをすべて削除する。
+  // 学習設定変更時に呼ぶ: ノートと同期カーソル、途中までのバックフィルの進捗をすべて削除する。
   // uid:* (ユーザー ID キャッシュ) と lastPostAt は残す。
   const clearLearningData = () => {
     db.exec("DELETE FROM notes");
-    db.prepare("DELETE FROM state WHERE key LIKE 'cursor:%'").run();
+    db.prepare("DELETE FROM state WHERE key LIKE 'cursor:%' OR key LIKE 'backfill:%'").run();
   };
 
   return {
     upsertNotes,
     getState,
     setState,
+    deleteState,
     loadRecentTexts,
     countNotes,
     clearLearningData,

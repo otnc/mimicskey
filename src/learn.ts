@@ -31,6 +31,8 @@ mkdirSync(dirname(cfg.dbPath), { recursive: true });
 const store = createStore(cfg.dbPath);
 const client = createMisskeyClient(cfg.misskeyInstance, cfg.misskeyToken);
 const twitter = createTwitterClient(getOrCreateInstanceId(store));
+// learn コマンドは Ctrl+C でそのまま終了する (X のバックフィルの進捗はページごとに保存済みで、次回は続きから取る)。
+const { signal } = new AbortController();
 
 try {
   if (clear) {
@@ -40,10 +42,10 @@ try {
     resetIfLearnConfigChanged(store, cfg);
   }
   for (const user of cfg.misskey.targetUsers) {
-    await syncUserNotes(client, store, user, cfg);
+    await syncUserNotes(client, store, user, cfg, signal);
   }
   for (const user of cfg.twitter.targetUsers) {
-    await syncTwitterUser(twitter, store, user, cfg);
+    await syncTwitterUser(twitter, store, user, cfg, signal);
   }
   log.info(`学習データ: ${store.countNotes()} ノート`);
 } catch (err) {

@@ -36,12 +36,18 @@ describe("isLearnableTweet", () => {
 
 describe("buildSearchQuery", () => {
   test("バックフィルは from: だけ", () => {
-    expect(buildSearchQuery({ screenName: "jack" }, null, true)).toBe("from:jack");
+    expect(buildSearchQuery({ screenName: "jack" }, {}, true)).toBe("from:jack");
+  });
+
+  test("中断したバックフィルは max_id: で続きから取る", () => {
+    expect(buildSearchQuery({ screenName: "jack" }, { maxId: "456" }, true)).toBe(
+      "from:jack max_id:456",
+    );
   });
 
   test("カーソル・開始日・リプライ除外を演算子にする", () => {
     const sinceMs = Date.parse("2024-01-01T00:00:00Z");
-    expect(buildSearchQuery({ screenName: "jack", sinceMs }, "123", false)).toBe(
+    expect(buildSearchQuery({ screenName: "jack", sinceMs }, { sinceId: "123" }, false)).toBe(
       "from:jack since_id:123 since_time:1704067200 -filter:replies",
     );
   });
